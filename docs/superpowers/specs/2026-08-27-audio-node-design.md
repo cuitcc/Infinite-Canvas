@@ -168,18 +168,44 @@ docker compose up -d --build
 
 ## 预设音色列表（初版）
 
-覆盖中文、英文、日文、韩文等常用音色，约 30 个。完整列表在实现时写入 `lib/edge-tts-voices.ts`。
+以中文和英文音色为主，约 30 个。完整列表在实现时写入 `lib/edge-tts-voices.ts`，并保留自定义输入框以使用其他 voice name。
 
-示例：
+中文示例：
 
-- `zh-CN-XiaoxiaoNeural` 晓晓（女）
-- `zh-CN-XiaoyiNeural` 晓伊（男）
+- `zh-CN-XiaoxiaoNeural` 晓晓（女，通用）
+- `zh-CN-XiaoyiNeural` 晓伊（男，通用）
 - `zh-CN-YunxiNeural` 云希（男，少年）
-- `zh-CN-YunjianNeural` 云健（男，新闻）
-- `en-US-AriaNeural` Aria（女）
-- `en-US-GuyNeural` Guy（男）
+- `zh-CN-YunjianNeural` 云健（男，新闻/纪录片）
+- `zh-CN-XiaochenNeural` 晓晨（女）
+- `zh-CN-XiaohanNeural` 晓涵（女）
+- `zh-CN-XiaomengNeural` 晓梦（女）
+- `zh-CN-XiaoruiNeural` 晓睿（女）
+- `zh-CN-XiaoshuangNeural` 晓双（女，卡通）
+- `zh-CN-XiaoyanNeural` 晓颜（女）
+- `zh-CN-YunfengNeural` 云枫（男）
+- `zh-CN-YunhaoNeural` 云浩（男）
+- `zh-CN-YunyeNeural` 云野（男）
+- `zh-CN-YunzeNeural` 云泽（男）
+- `zh-HK-HiuMaanNeural` 晓曼（粤语，女）
+- `zh-HK-WanLungNeural` 云龙（粤语，男）
+- `zh-TW-HsiaoChenNeural` 晓臻（台湾腔，女）
+- `zh-TW-YunJheNeural` 云哲（台湾腔，男）
+
+英文示例：
+
+- `en-US-AriaNeural` Aria（女，通用）
+- `en-US-AnaNeural` Ana（女，儿童）
+- `en-US-ChristopherNeural` Christopher（男）
+- `en-US-EricNeural` Eric（男）
+- `en-US-GuyNeural` Guy（男，新闻）
 - `en-US-JennyNeural` Jenny（女）
-- `ja-JP-NanamiNeural` Nanami（女）
-- `ko-KR-SunHiNeural` Sun-Hi（女）
-- `fr-FR-DeniseNeural` Denise（女）
+- `en-US-MichelleNeural` Michelle（女）
+- `en-US-RogerNeural` Roger（男）
+- `en-US-SteffanNeural` Steffan（男）
+- `en-GB-LibbyNeural` Libby（英式，女）
+- `en-GB-RyanNeural` Ryan（英式，男）
+- `en-AU-NatashaNeural` Natasha（澳式，女）
+- `en-AU-WilliamNeural` William（澳式，男）
+- `en-CA-ClaraNeural` Clara（加式，女）
+- `en-IN-NeerjaNeural` Neerja（印度式，女）
 - ...（其余按需补充）
