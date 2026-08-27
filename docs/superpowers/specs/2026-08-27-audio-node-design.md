@@ -168,28 +168,31 @@ docker compose up -d --build
 
 ## 预设音色列表（初版）
 
-以中文和英文音色为主，约 30 个。完整列表在实现时写入 `lib/edge-tts-voices.ts`，并保留自定义输入框以使用其他 voice name。
+以中文音色为主（含普通话、粤语、台湾腔、辽宁/陕西方言），辅以常用英文音色，约 30 个。完整列表写入 `lib/edge-tts-voices.ts`，并保留自定义输入框以使用其他 voice name。
 
-中文示例：
+中文音色（Edge TTS 当前可用）：
 
-- `zh-CN-XiaoxiaoNeural` 晓晓（女，通用）
-- `zh-CN-XiaoyiNeural` 晓伊（男，通用）
-- `zh-CN-YunxiNeural` 云希（男，少年）
-- `zh-CN-YunjianNeural` 云健（男，新闻/纪录片）
-- `zh-CN-XiaochenNeural` 晓晨（女）
-- `zh-CN-XiaohanNeural` 晓涵（女）
-- `zh-CN-XiaomengNeural` 晓梦（女）
-- `zh-CN-XiaoruiNeural` 晓睿（女）
-- `zh-CN-XiaoshuangNeural` 晓双（女，卡通）
-- `zh-CN-XiaoyanNeural` 晓颜（女）
-- `zh-CN-YunfengNeural` 云枫（男）
-- `zh-CN-YunhaoNeural` 云浩（男）
-- `zh-CN-YunyeNeural` 云野（男）
-- `zh-CN-YunzeNeural` 云泽（男）
-- `zh-HK-HiuMaanNeural` 晓曼（粤语，女）
-- `zh-HK-WanLungNeural` 云龙（粤语，男）
-- `zh-TW-HsiaoChenNeural` 晓臻（台湾腔，女）
-- `zh-TW-YunJheNeural` 云哲（台湾腔，男）
+普通话：
+- `zh-CN-XiaoxiaoNeural` 晓晓（女，新闻/小说）
+- `zh-CN-XiaoyiNeural` 晓伊（女，卡通/小说）
+- `zh-CN-YunjianNeural` 云健（男，体育/小说）
+- `zh-CN-YunxiNeural` 云希（男，小说）
+- `zh-CN-YunxiaNeural` 云夏（男，卡通/小说）
+- `zh-CN-YunyangNeural` 云扬（男，新闻）
+
+方言：
+- `zh-CN-liaoning-XiaobeiNeural` 晓北（辽宁话，女）
+- `zh-CN-shaanxi-XiaoniNeural` 小妮（陕西话，女）
+
+粤语：
+- `zh-HK-HiuGaaiNeural` 晓佳（女）
+- `zh-HK-HiuMaanNeural` 晓曼（女）
+- `zh-HK-WanLungNeural` 云龙（男）
+
+台湾腔：
+- `zh-TW-HsiaoChenNeural` 晓臻（女）
+- `zh-TW-HsiaoYuNeural` 晓雨（女）
+- `zh-TW-YunJheNeural` 云哲（男）
 
 英文示例：
 
