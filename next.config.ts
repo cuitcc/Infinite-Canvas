@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  output: "standalone",
+  serverExternalPackages: ["better-sqlite3", "@volcengine/tos-sdk"],
 };
 
 export default nextConfig;
