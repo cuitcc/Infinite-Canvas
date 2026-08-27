@@ -101,7 +101,7 @@ export interface AgnesImageResponse {
   error?: unknown;
 }
 
-export type NodeType = "prompt" | "image" | "video" | "upload";
+export type NodeType = "prompt" | "image" | "video" | "upload" | "audio";
 
 export interface CanvasNodeData {
   kind: NodeType;
@@ -118,6 +118,7 @@ export interface CanvasNodeData {
   seed?: number;
   imageTier?: string;
   imageRatio?: string;
+  voice?: string;
   /** 视频节点：新模型使用 seconds + aspectRatio */
   seconds?: string;
   aspectRatio?: string;
@@ -139,7 +140,7 @@ export interface CanvasNodeData {
 }
 
 export interface CanvasEdgeData {
-  role?: "first-frame" | "reference";
+  role?: "first-frame" | "reference" | "audio";
 }
 
 export interface TimelineClip {
@@ -149,11 +150,12 @@ export interface TimelineClip {
   order: number;
   trimIn: number;
   trimOut: number | null;
+  audioMediaId?: string;
 }
 
 export interface MediaRecord {
   id: string;
-  type: "image" | "video";
+  type: "image" | "video" | "audio";
   remoteUrl?: string;
   localPath?: string;
   mimeType?: string;

@@ -63,6 +63,28 @@ async function normalizeReferenceUrls(urls: string[]): Promise<string[]> {
   return normalized;
 }
 
+async function normalizeAudioUrls(urls: string[]): Promise<string[]> {
+  const normalized: string[] = [];
+  for (const url of urls) {
+    const mediaId = extractMediaId(url);
+    if (mediaId) {
+      try {
+        const record = getMediaById(mediaId);
+        if (record?.localPath) {
+          const buffer = readFileSync(path.join(process.cwd(), record.localPath));
+          const publicUrl = await uploadBufferToTos(buffer, "audio/mpeg", "audio.mp3");
+          normalized.push(publicUrl);
+          continue;
+        }
+      } catch (error) {
+        console.warn("[generate/video] failed to upload local audio to TOS, keeping original URL", { url, error: (error as Error).message });
+      }
+    }
+    normalized.push(url);
+  }
+  return normalized;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -103,7 +125,7 @@ export async function POST(req: NextRequest) {
       images = mirrored;
 
       const mode = images.length >= 2 ? "keyframes" : image || images.length === 1 ? "image" : "text";
-      const audios = audioUrls.filter(Boolean);
+      const audios = await normalizeAudioUrls(audioUrls.filter(Boolean));
       const input = {
         mode: mode as "text" | "image" | "keyframes",
         prompt: prompt.trim(),

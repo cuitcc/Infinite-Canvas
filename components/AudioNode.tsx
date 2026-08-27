@@ -87,7 +87,7 @@ export function AudioNodeView({ id, data, selected }: NodeProps) {
           <audio src={`/api/media/${mediaId}`} controls className="w-full" />
         )}
       </div>
-      <Handle type="source" position={Position.Right} className="!h-3 !w-3 !bg-slate-400" />
+      <Handle type="source" position={Position.Right} className="!h-3 !w-3 !bg-emerald-500" />
     </NodeShell>
   );
 }

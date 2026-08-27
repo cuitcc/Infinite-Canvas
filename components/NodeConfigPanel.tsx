@@ -11,6 +11,7 @@ const KIND_LABEL: Record<string, string> = {
   image: "图片节点",
   video: "视频节点",
   upload: "上传图片节点",
+  audio: "音频节点",
 };
 
 interface RegistryModel { modelId: string; label: string; kind: string }

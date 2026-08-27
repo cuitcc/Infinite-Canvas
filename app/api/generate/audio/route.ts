@@ -31,7 +31,11 @@ export async function POST(req: NextRequest) {
     mkdirSync(MEDIA_DIR, { recursive: true });
     const filePath = path.join(MEDIA_DIR, fileName);
 
-    await tts.ttsPromise(text.trim(), filePath);
+    const TTS_TIMEOUT_MS = 60_000;
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("语音合成超时，请稍后重试")), TTS_TIMEOUT_MS)
+    );
+    await Promise.race([tts.ttsPromise(text.trim(), filePath), timeout]);
 
     const fileStat = await stat(filePath);
     const relativePath = path.relative(process.cwd(), filePath);

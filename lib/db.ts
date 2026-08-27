@@ -130,7 +130,6 @@ export interface TimelineClip {
   trimIn: number;
   trimOut: number | null;
   audioMediaId?: string;
-  audioVolume?: number;
 }
 
 export interface GenTaskRow {

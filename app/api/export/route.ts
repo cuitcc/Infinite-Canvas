@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function runExport(job: ExportJob, clips: Array<{ trimIn: number; trimOut: number | null; audioMediaId?: string; audioVolume?: number }>, media: Array<{ id: string; localPath?: string; mimeType?: string }>) {
+async function runExport(job: ExportJob, clips: Array<{ trimIn: number; trimOut: number | null; audioMediaId?: string }>, media: Array<{ id: string; localPath?: string; mimeType?: string }>) {
   const ffmpeg = resolveFfmpeg();
   const workDir = path.join(EXPORT_DIR, job.id);
   mkdirSync(workDir, { recursive: true });
