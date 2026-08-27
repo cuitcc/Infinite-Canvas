@@ -48,6 +48,8 @@ export interface TimelineClipState {
   order: number;
   trimIn: number;
   trimOut: number | null;
+  audioMediaId?: string;
+  audioVolume?: number;
 }
 
 interface CanvasStore {
