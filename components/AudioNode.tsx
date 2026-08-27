@@ -19,6 +19,7 @@ export function AudioNodeView({ id, data, selected }: NodeProps) {
 
   const generate = async () => {
     if (!text.trim()) return;
+    updateNodeData(id, { status: "generating", error: undefined });
     setBusy(true);
     try {
       const res = await fetch("/api/generate/audio", {
@@ -28,7 +29,7 @@ export function AudioNodeView({ id, data, selected }: NodeProps) {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "生成失败");
-      updateNodeData(id, { mediaId: json.mediaId, remoteUrl: json.url });
+      updateNodeData(id, { status: "done", mediaId: json.mediaId, remoteUrl: json.url });
     } catch (error) {
       updateNodeData(id, { status: "failed", error: (error as Error).message });
     } finally {
@@ -44,7 +45,7 @@ export function AudioNodeView({ id, data, selected }: NodeProps) {
           onChange={(e) => updateNodeData(id, { prompt: e.target.value })}
           placeholder="输入要合成语音的文本"
           rows={3}
-          className="w-full resize-none rounded border border-slate-200 bg-slate-50 p-2 text-xs"
+          className="nodrag w-full resize-none rounded border border-slate-200 bg-slate-50 p-2 text-xs"
         />
         <select
           value={isCustom ? "__custom__" : voice}
@@ -56,7 +57,7 @@ export function AudioNodeView({ id, data, selected }: NodeProps) {
               updateNodeData(id, { voice: value });
             }
           }}
-          className="rounded border border-slate-200 bg-white px-2 py-1 text-xs"
+          className="nodrag rounded border border-slate-200 bg-white px-2 py-1 text-xs"
         >
           {EDGE_TTS_VOICES.map((v) => (
             <option key={v.id} value={v.id}>{v.label}</option>
@@ -71,16 +72,17 @@ export function AudioNodeView({ id, data, selected }: NodeProps) {
               updateNodeData(id, { voice: e.target.value });
             }}
             placeholder="输入 Edge voice name"
-            className="rounded border border-slate-200 bg-white px-2 py-1 text-xs"
+            className="nodrag rounded border border-slate-200 bg-white px-2 py-1 text-xs"
           />
         )}
         <button
           onClick={generate}
           disabled={busy || !text.trim()}
-          className={`rounded px-2.5 py-1 text-[11px] font-medium text-white ${busy || !text.trim() ? "bg-slate-300" : "bg-emerald-500 hover:bg-emerald-600"}`}
+          className={`nodrag rounded px-2.5 py-1 text-[11px] font-medium text-white ${busy || !text.trim() ? "bg-slate-300" : "bg-emerald-500 hover:bg-emerald-600"}`}
         >
           {busy ? "合成中…" : mediaId ? "重新生成" : "生成语音"}
         </button>
+        {status === "failed" && (data as { error?: string }).error && <p className="text-[10px] text-rose-500">{(data as { error?: string }).error}</p>}
         {mediaId && (
           <audio src={`/api/media/${mediaId}`} controls className="w-full" />
         )}

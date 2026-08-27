@@ -11,6 +11,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useCanvasStore, normalizeKind, type CanvasNodeData } from "@/lib/store";
+import { DEFAULT_EDGE_VOICE } from "@/lib/edge-tts-voices";
 import { ImageNodeView } from "@/components/ImageNode";
 import { VideoNodeView } from "@/components/VideoNode";
 import { UploadNodeView } from "@/components/UploadNode";
@@ -141,7 +142,9 @@ function CanvasPage() {
       defaults.height = 768;
       defaults.numFrames = 121;
       defaults.frameRate = 24;
-    }    addNode({
+    }
+    if (kind === "audio") defaults.voice = DEFAULT_EDGE_VOICE;
+    addNode({
       id: uid(kind),
       type: kind,
       position,
