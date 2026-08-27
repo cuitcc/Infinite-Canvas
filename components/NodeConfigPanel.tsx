@@ -4,7 +4,6 @@ import { useEffect, useState, type DragEvent } from "react";
 import { useCanvasStore, type CanvasNodeData } from "@/lib/store";
 import { SUPPORTED_IMAGE_RATIOS } from "@/lib/image-config";
 import { AGNES_VIDEO_ASPECT_RATIOS, AGNES_VIDEO_SECONDS } from "@/lib/agnes-video";
-import { EDGE_TTS_VOICES, DEFAULT_EDGE_VOICE } from "@/lib/edge-tts-voices";
 import type { Edge, Node } from "@xyflow/react";
 
 const KIND_LABEL: Record<string, string> = {
@@ -69,6 +68,7 @@ export function NodeConfigPanel({ node, onClose }: { node: Node<CanvasNodeData>;
 
   const busy = data.status === "queued" || data.status === "generating";
   const seconds = Math.round(((data.numFrames ?? 121) / (data.frameRate ?? 24)) * 10) / 10;
+  const audioSrc = data.kind === "audio" ? (data.mediaId ? `/api/media/${data.mediaId}` : data.remoteUrl) : undefined;
 
   return (
     <div className="border-t border-slate-200 bg-white">
@@ -229,49 +229,16 @@ export function NodeConfigPanel({ node, onClose }: { node: Node<CanvasNodeData>;
         {data.kind === "audio" && (
           <div className="flex flex-col gap-3 text-xs text-slate-600">
             {data.status && <p className="text-sm text-slate-700">状态: {data.status}</p>}
-            {data.remoteUrl && (
+            {audioSrc && (
               <div className="mt-2">
                 <p className="text-[10px] font-medium text-slate-500">音频文件</p>
                 <audio controls className="w-full mt-1">
-                  <source src={data.remoteUrl} type="audio/mpeg" />
+                  <source src={audioSrc} type="audio/mpeg" />
                   您的浏览器不支持音频播放
                 </audio>
-                <a href={data.remoteUrl} target="_blank" rel="noreferrer" className="break-all text-sky-600 underline text-[10px] mt-1 block">{data.remoteUrl.slice(0, 100)}</a>
+                <a href={audioSrc} target="_blank" rel="noreferrer" className="break-all text-sky-600 underline text-[10px] mt-1 block">{audioSrc.slice(0, 100)}</a>
               </div>
             )}
-            <div className="flex flex-col gap-1">
-              <label className="flex flex-col gap-1">
-                音色
-                <select
-                  value={data.voice ?? DEFAULT_EDGE_VOICE}
-                  onChange={(e) => updateNodeData(id, { voice: e.target.value })}
-                  className="rounded border border-slate-200 bg-white px-2 py-1.5"
-                >
-                  {EDGE_TTS_VOICES.map((voice) => (
-                    <option key={voice.id} value={voice.id}>{voice.label}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="flex flex-col gap-1">
-                合成文本
-                <textarea
-                  value={data.prompt ?? ""}
-                  onChange={(e) => updateNodeData(id, { prompt: e.target.value })}
-                  rows={4}
-                  className="w-full resize-none rounded border border-slate-200 bg-slate-50 p-2"
-                  placeholder="输入要合成语音的文字..."
-                />
-              </label>
-            </div>
-            <button
-              onClick={() => triggerGeneration(id)}
-              disabled={busy}
-              className={`rounded px-2.5 py-1 text-[11px] font-medium text-white ${busy ? "bg-slate-300" : "bg-emerald-500 hover:bg-emerald-600"}`}
-            >
-              {busy ? "生成中…" : data.mediaId ? "重新生成" : "生成音频"}
-            </button>
           </div>
         )}
 
@@ -279,7 +246,7 @@ export function NodeConfigPanel({ node, onClose }: { node: Node<CanvasNodeData>;
           <div className="mt-3 border-t border-slate-100 pt-3">
             <p className="text-[10px] font-medium text-slate-500">上游参考({upstream.length})</p>
             {upstream.length === 0 ? (
-              <p className="mt-1 text-[10px] text-slate-400">无。从文本/图片/上传节点连线到本节点。</p>
+              <p className="mt-1 text-[10px] text-slate-400">无。从文本/图片/上传/音频节点连线到本节点。</p>
             ) : data.kind === "video" ? (
               <VideoUpstreamList nodeId={id} upstream={upstream} referenceOrder={data.referenceOrder as string[] | undefined} />
             ) : (
@@ -406,13 +373,16 @@ function VideoUpstreamList({
         </div>
       )}
       {audioUpstream.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-2">
-          {audioUpstream.map(({ edge }) => (
-            <div key={edge.id} className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5">
-              <span className="flex h-8 w-8 items-center justify-center rounded bg-emerald-100 text-[10px] text-emerald-600">音</span>
-              <span className="text-[10px] text-slate-500">音频参考</span>
-            </div>
-          ))}
+        <div className="mb-2">
+          <p className="text-[10px] text-slate-500">音频参考</p>
+          <div className="flex flex-wrap gap-2">
+            {audioUpstream.map(({ edge }) => (
+              <div key={edge.id} className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5">
+                <span className="flex h-8 w-8 items-center justify-center rounded bg-emerald-100 text-[10px] text-emerald-600">音</span>
+                <span className="text-[10px] text-slate-500">音频参考</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
