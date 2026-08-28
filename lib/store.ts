@@ -159,7 +159,17 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       const src = s.nodes.find((n) => n.id === e.source);
       if (!src) continue;
       if (src.data.prompt) prompt = prompt || src.data.prompt;
-      if (src.data.kind === "audio" && src.data.remoteUrl) {
+      if (src.data.kind === "audio") {
+        if (!src.data.remoteUrl) {
+          set((st) => ({
+            nodes: st.nodes.map((n) =>
+              n.id === nodeId
+                ? { ...n, data: { ...n.data, status: "failed", error: "上游音频节点尚未生成完成，请先合成音频" } }
+                : n
+            ),
+          }));
+          return;
+        }
         audioUrls.push(src.data.remoteUrl);
       }
       if ((src.data.kind === "image" || src.data.kind === "upload") && src.data.remoteUrl) {

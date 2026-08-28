@@ -116,7 +116,7 @@ function CanvasPage() {
       try {
         // 先取出本次提交的节点/边 id,服务端删除不在本次列表中的孤儿记录
         const payloadNodes = nodes.map(({ id, position, data }) => ({ id, position, data }));
-        const payloadEdges = edges.map(({ id, source, target }) => ({ id, source, target }));
+        const payloadEdges = edges.map(({ id, source, target, data }) => ({ id, source, target, data }));
         const res = await fetch(`/api/projects/${projectId}/graph`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },

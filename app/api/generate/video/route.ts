@@ -117,6 +117,15 @@ export async function POST(req: NextRequest) {
     let modelName = model ?? "agnes-video-2.5-flash";
 
     if (isAgnes) {
+      // Agnes Video 只有 reference 模式(>=2 张参考图)才接受 audios 字段
+      const mode = images.length >= 2 ? "keyframes" : image || images.length === 1 ? "image" : "text";
+      if (audioUrls.filter(Boolean).length > 0 && mode !== "keyframes") {
+        return NextResponse.json(
+          { error: "Agnes Video 仅在使用 2 张及以上参考图的 reference 模式下支持音频参考，请添加参考图或移除音频连接" },
+          { status: 400 }
+        );
+      }
+
       // Agnes Video reference/keyframe 模式对 Agnes Image 输出的 4K 大图兼容性差,先缩放转存到 TOS
       const mirrored = await normalizeReferenceUrls(images);
       if (mirrored.some((u, i) => u !== images[i])) {
@@ -124,7 +133,6 @@ export async function POST(req: NextRequest) {
       }
       images = mirrored;
 
-      const mode = images.length >= 2 ? "keyframes" : image || images.length === 1 ? "image" : "text";
       const audios = await normalizeAudioUrls(audioUrls.filter(Boolean));
       const input = {
         mode: mode as "text" | "image" | "keyframes",
