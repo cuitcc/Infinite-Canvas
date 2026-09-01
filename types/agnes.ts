@@ -122,6 +122,8 @@ export interface CanvasNodeData {
   /** 视频节点：新模型使用 seconds + aspectRatio */
   seconds?: string;
   aspectRatio?: string;
+  /** 视频节点：人物台词，生成时注入提示词由模型直生语音并与口型同步 */
+  dialogue?: string;
   /** 视频节点：上游参考图 source node id 顺序 */
   referenceOrder?: string[];
   /** 旧字段保留兼容 */

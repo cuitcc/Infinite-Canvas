@@ -36,6 +36,8 @@ export interface CanvasNodeData extends Record<string, unknown> {
   remoteUrl?: string;
   sourceNodeIds?: string[];
   voice?: string;
+  /** 视频节点：人物台词，生成时注入提示词由模型直生语音并与口型同步 */
+  dialogue?: string;
   /** 视频节点：上游参考图 source node id 顺序 */
   referenceOrder?: string[];
   updatedAt?: number;
@@ -205,6 +207,12 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       if (!prompt.includes("面部特征")) {
         prompt = `${prompt},保持人物面部特征、五官、发型与参考图完全一致`;
       }
+    }
+
+    // 台词注入:Agnes 可按提示词台词直生人声(Phase 0 实测含音轨),口型与台词同步
+    const dialogue = data.dialogue?.trim();
+    if (dialogue && data.kind === "video") {
+      prompt = `${prompt}\n人物开口说出台词（人声清晰，口型与台词精确同步）："${dialogue}"`;
     }
 
     if (!prompt.trim()) {
