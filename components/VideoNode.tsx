@@ -5,6 +5,7 @@ import { NodeProps, type Node } from "@xyflow/react";
 import { NodeShell } from "./NodeShell";
 import { PromptOptimizeModal } from "./PromptOptimizeModal";
 import { useCanvasStore, type CanvasNodeData } from "@/lib/store";
+import { useDialogueExtract } from "./use-dialogue-extract";
 
 const STATUS_LABEL: Record<string, string> = {
   idle: "待生成",
@@ -20,6 +21,7 @@ export function VideoNodeView({ id, data, selected }: NodeProps<Node<CanvasNodeD
   const status = data.status ?? "idle";
   const busy = status === "queued" || status === "generating";
   const [optimizeOpen, setOptimizeOpen] = useState(false);
+  const { extract, extracting, error: dialogueError, clearError } = useDialogueExtract(id);
 
   return (
     <NodeShell kind="video" nodeId={id} title="视频" selected={selected} status={STATUS_LABEL[status]}>
@@ -40,6 +42,22 @@ export function VideoNodeView({ id, data, selected }: NodeProps<Node<CanvasNodeD
             ✨ 优化
           </button>
         </div>
+        <div className="flex items-center gap-1.5">
+          <input
+            value={data.dialogue ?? ""}
+            onChange={(e) => updateNodeData(id, { dialogue: e.target.value })}
+            placeholder="人物台词(可选)"
+            className="nodrag min-w-0 flex-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700 outline-none focus:border-rose-400"
+          />
+          <button
+            onClick={() => { clearError(); extract(); }}
+            disabled={extracting}
+            className="nodrag shrink-0 rounded bg-violet-100 px-2 py-0.5 text-[10px] text-violet-600 hover:bg-violet-200 disabled:opacity-50"
+          >
+            {extracting ? "提取中…" : "✨ 提取台词"}
+          </button>
+        </div>
+        {dialogueError && <p className="text-[10px] text-rose-500">{dialogueError}</p>}
         {data.error && <p className="text-[10px] text-rose-500">{data.error}</p>}
         {data.mediaId ? (
           <video
