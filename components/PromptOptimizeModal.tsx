@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useCanvasStore } from "@/lib/store";
 
 type OptimizeKind = "image" | "video";
@@ -16,13 +16,14 @@ export function PromptOptimizeModal({ nodeId, kind, open, onClose }: {
   open: boolean;
   onClose: () => void;
 }) {
-  const node = useCanvasStore((s) => s.nodes.find((n) => n.id === nodeId));
-  const edges = useCanvasStore((s) => s.edges);
   const nodes = useCanvasStore((s) => s.nodes);
+  const node = nodes.find((n) => n.id === nodeId);
+  const edges = useCanvasStore((s) => s.edges);
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const [result, setResult] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const generationRef = useRef(0);
 
   const data = node?.data;
   const prompt = (data?.prompt as string | undefined) ?? "";
@@ -39,6 +40,7 @@ export function PromptOptimizeModal({ nodeId, kind, open, onClose }: {
       setError("提示词为空，请先输入内容");
       return;
     }
+    const gen = ++generationRef.current;
     setBusy(true);
     setError(undefined);
     try {
@@ -51,13 +53,15 @@ export function PromptOptimizeModal({ nodeId, kind, open, onClose }: {
         body: JSON.stringify({ text: prompt, action: ACTION_KEY[kind], model: textModel, context }),
       });
       const json = await res.json();
+      if (gen !== generationRef.current) return;
       if (!res.ok) throw new Error(json.error || "优化失败");
       if (!json.result || !String(json.result).trim()) throw new Error("优化结果为空，请重试");
       setResult(String(json.result));
     } catch (err) {
+      if (gen !== generationRef.current) return;
       setError((err as Error).message);
     } finally {
-      setBusy(false);
+      if (gen === generationRef.current) setBusy(false);
     }
     // data 字段仅在打开瞬间读取,依赖 prompt/referenceCount 即可
   }, [prompt, kind, textModel, referenceCount, data?.imageRatio, data?.imageTier, data?.aspectRatio, data?.seconds]);
@@ -66,6 +70,7 @@ export function PromptOptimizeModal({ nodeId, kind, open, onClose }: {
     if (open) {
       setResult("");
       setError(undefined);
+      ++generationRef.current;
       void optimize();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
