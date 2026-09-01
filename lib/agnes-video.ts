@@ -109,10 +109,23 @@ export async function createAgnesVideo(body: AgnesCreateVideoBody): Promise<Agne
     aspect_ratio: body.aspect_ratio,
     promptLength: body.prompt.length,
   });
-  return requestAgnes<AgnesVideoTask>("/videos", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  try {
+    return await requestAgnes<AgnesVideoTask>("/videos", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    // Agnes 视频限流为每分钟 1 条：等待一个完整窗口后重试一次,仍失败则抛出明确提示
+    if (error instanceof AgnesApiError && error.status === 429) {
+      console.warn("[agnes-video] rate limited, retrying once after 65s");
+      await sleep(65_000);
+      return await requestAgnes<AgnesVideoTask>("/videos", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    }
+    throw error;
+  }
 }
 
 export async function getAgnesVideo(taskId: string, model = DEFAULT_VIDEO_MODEL): Promise<AgnesVideoTask> {
@@ -214,7 +227,14 @@ function safeJson(text: string): unknown {
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function mapAgnesError(status: number, data?: unknown): string {
+  if (status === 429) {
+    return "Agnes 视频生成限流中（每分钟仅允许创建 1 个任务），已自动等待重试仍失败，请稍等约 1 分钟后再试";
+  }
   if (status === 400) {
     const code = getAgnesErrorCode(data);
     const detail = stringifyAgnesError(data).toLowerCase();
