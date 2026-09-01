@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { useCanvasStore } from "@/lib/store";
 
-/** 提取台词到视频节点:本节点提示词为空时回退上游文本节点(与生成链路取值一致) */
+/** 提取台词到视频节点:本节点提示词为空时回退上游节点(与生成链路取值一致) */
 export function useDialogueExtract(nodeId: string) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const [extracting, setExtracting] = useState(false);
@@ -24,7 +24,7 @@ export function useDialogueExtract(nodeId: string) {
       text = upstreamText ?? "";
     }
     if (!text.trim()) {
-      setError("没有可用提示词,请先填写提示词或连接文本节点");
+      setError("没有可用提示词,请先填写提示词或从有提示词的节点连线");
       return;
     }
     setExtracting(true);
