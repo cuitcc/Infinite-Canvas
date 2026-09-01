@@ -15,10 +15,11 @@ export function useDialogueExtract(nodeId: string) {
     if (!node) return;
     let text = node.data.prompt ?? "";
     if (!text.trim()) {
+      // 与生成链路一致:按连线顺序取第一个有提示词的上游节点,不限节点类型
       const upstreamText = s.edges
         .filter((e) => e.target === nodeId)
         .map((e) => s.nodes.find((n) => n.id === e.source))
-        .find((n) => n && (n.data.kind === "text" || n.data.kind === "prompt" as any) && (n.data.prompt ?? "").trim())
+        .find((n) => n && (n.data.prompt ?? "").trim())
         ?.data.prompt;
       text = upstreamText ?? "";
     }
