@@ -5,6 +5,7 @@ import { useCanvasStore, type CanvasNodeData } from "@/lib/store";
 import { SUPPORTED_IMAGE_RATIOS } from "@/lib/image-config";
 import { AGNES_VIDEO_ASPECT_RATIOS, AGNES_VIDEO_SECONDS } from "@/lib/agnes-video";
 import { PromptOptimizeModal } from "./PromptOptimizeModal";
+import { useDialogueExtract } from "./use-dialogue-extract";
 import type { Edge, Node } from "@xyflow/react";
 
 const KIND_LABEL: Record<string, string> = {
@@ -72,6 +73,7 @@ export function NodeConfigPanel({ node, onClose }: { node: Node<CanvasNodeData>;
   const seconds = Math.round(((data.numFrames ?? 121) / (data.frameRate ?? 24)) * 10) / 10;
   const audioSrc = data.kind === "audio" ? (data.mediaId ? `/api/media/${data.mediaId}` : data.remoteUrl) : undefined;
   const [optimizeOpen, setOptimizeOpen] = useState(false);
+  const { extract, extracting, error: dialogueError, clearError } = useDialogueExtract(id);
   const referenceCount = upstream.filter(({ node: n }) => n!.data.kind === "image" || n!.data.kind === "upload").length;
 
   return (
@@ -171,6 +173,30 @@ export function NodeConfigPanel({ node, onClose }: { node: Node<CanvasNodeData>;
             >
               ✨ 优化提示词
             </button>
+          </div>
+        )}
+        {data.kind === "video" && (
+          <div className="mt-3">
+            <label className="flex flex-col gap-1 text-xs text-slate-600">
+              人物台词(可选,生成时注入提示词,由模型直生语音并与口型同步)
+              <textarea
+                value={data.dialogue ?? ""}
+                onChange={(e) => updateNodeData(id, { dialogue: e.target.value })}
+                rows={2}
+                placeholder="如:少女：原来你也在这里"
+                className="w-full resize-none rounded border border-slate-200 bg-white px-2 py-1.5 outline-none focus:border-rose-400"
+              />
+            </label>
+            <div className="mt-1.5 flex items-center gap-2">
+              <button
+                onClick={() => { clearError(); extract(); }}
+                disabled={extracting}
+                className="rounded bg-violet-100 px-2.5 py-1 text-[11px] text-violet-600 hover:bg-violet-200 disabled:opacity-50"
+              >
+                {extracting ? "提取中…" : "✨ 提取台词"}
+              </button>
+              {dialogueError && <span className="text-[10px] text-rose-500">{dialogueError}</span>}
+            </div>
           </div>
         )}
 
