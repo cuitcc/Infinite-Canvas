@@ -4,6 +4,7 @@ import { useEffect, useState, type DragEvent } from "react";
 import { useCanvasStore, type CanvasNodeData } from "@/lib/store";
 import { SUPPORTED_IMAGE_RATIOS } from "@/lib/image-config";
 import { AGNES_VIDEO_ASPECT_RATIOS, AGNES_VIDEO_SECONDS } from "@/lib/agnes-video";
+import { PromptOptimizeModal } from "./PromptOptimizeModal";
 import type { Edge, Node } from "@xyflow/react";
 
 const KIND_LABEL: Record<string, string> = {
@@ -70,6 +71,8 @@ export function NodeConfigPanel({ node, onClose }: { node: Node<CanvasNodeData>;
   const busy = data.status === "queued" || data.status === "generating";
   const seconds = Math.round(((data.numFrames ?? 121) / (data.frameRate ?? 24)) * 10) / 10;
   const audioSrc = data.kind === "audio" ? (data.mediaId ? `/api/media/${data.mediaId}` : data.remoteUrl) : undefined;
+  const [optimizeOpen, setOptimizeOpen] = useState(false);
+  const referenceCount = upstream.filter(({ node: n }) => n!.data.kind === "image" || n!.data.kind === "upload").length;
 
   return (
     <div className="border-t border-slate-200 bg-white">
@@ -159,6 +162,18 @@ export function NodeConfigPanel({ node, onClose }: { node: Node<CanvasNodeData>;
           </div>
         )}
 
+        {data.kind === "video" && (
+          <div className="mt-3">
+            <button
+              onClick={() => setOptimizeOpen(true)}
+              disabled={!(data.prompt ?? "").trim()}
+              className="rounded bg-violet-100 px-2.5 py-1 text-[11px] text-violet-600 hover:bg-violet-200 disabled:opacity-50"
+            >
+              ✨ 优化提示词
+            </button>
+          </div>
+        )}
+
         {data.kind === "image" && (
           <div className="grid grid-cols-2 gap-3 text-xs text-slate-600 md:grid-cols-3">
             <label className="flex flex-col gap-1">
@@ -193,6 +208,18 @@ export function NodeConfigPanel({ node, onClose }: { node: Node<CanvasNodeData>;
                 className="rounded border border-slate-200 bg-white px-2 py-1.5"
               />
             </label>
+          </div>
+        )}
+
+        {data.kind === "image" && (
+          <div className="mt-3">
+            <button
+              onClick={() => setOptimizeOpen(true)}
+              disabled={!(data.prompt ?? "").trim()}
+              className="rounded bg-violet-100 px-2.5 py-1 text-[11px] text-violet-600 hover:bg-violet-200 disabled:opacity-50"
+            >
+              ✨ 优化提示词
+            </button>
           </div>
         )}
 
@@ -275,6 +302,14 @@ export function NodeConfigPanel({ node, onClose }: { node: Node<CanvasNodeData>;
           </div>
         )}
       </div>
+      {(data.kind === "image" || data.kind === "video") && (
+        <PromptOptimizeModal
+          nodeId={id}
+          kind={data.kind}
+          open={optimizeOpen}
+          onClose={() => setOptimizeOpen(false)}
+        />
+      )}
     </div>
   );
 }
