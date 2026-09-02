@@ -112,6 +112,45 @@ async function generateAndAwait(nodeId: string): Promise<boolean> {
 const patchErr = (nodeId: string, error?: string) =>
   useCanvasStore.getState().updateNodeData(nodeId, { error, status: "queued" });
 
+/** 截取视频最后一帧并上传,返回图片 URL;任何失败返回 null(降级为不使用尾帧衔接)。
+ * 用 /api/media/{id} 同源播放避开 canvas 跨域污染,无需 ffmpeg。 */
+async function extractLastFrameUrl(mediaId: string): Promise<string | null> {
+  try {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.preload = "auto";
+    video.src = `/api/media/${mediaId}`;
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("视频加载超时")), 30_000);
+      video.onloadeddata = () => { clearTimeout(timer); resolve(); };
+      video.onerror = () => { clearTimeout(timer); reject(new Error("视频加载失败")); };
+    });
+    // seek 到结尾前 0.15s,取最后一帧
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("seek 超时")), 15_000);
+      video.onseeked = () => { clearTimeout(timer); resolve(); };
+      video.currentTime = Math.max(0, (video.duration || 10) - 0.15);
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx || !canvas.width) return null;
+    ctx.drawImage(video, 0, 0);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+    if (!blob) return null;
+    const form = new FormData();
+    form.append("file", new File([blob], `agent-tail-${mediaId}.jpg`, { type: "image/jpeg" }));
+    const res = await fetch("/api/upload", { method: "POST", body: form });
+    const json = await res.json();
+    if (!res.ok || !json.url) return null;
+    return json.url as string;
+  } catch (e) {
+    console.warn("[agent] 截取上一镜尾帧失败,本镜降级为无尾帧衔接", e);
+    return null;
+  }
+}
+
 // ==================== 对外 API ====================
 
 /** 中止当前 Agent 流程 */
@@ -279,29 +318,40 @@ async function runStoryboardAndShots(stylePrompt: string) {
       (a) => a.kind === "scene" && a.nodeId && a.status === "done",
     )?.nodeId ?? null;
 
+  // 上一镜尾帧衔接:{ nodeId, url } | null;截帧失败或上一镜跳过时为 null
+  let prevTail: { nodeId: string; url: string } | null = null;
+
   for (let i = 0; i < shots.length; i++) {
     if (aborted) return;
     const shot = shots[i];
 
-    // 参考图顺序：出场角色立绘在前（按 characters 顺序），场景图最后；
-    // refNames 供台词按角色名精确绑定，场景图标「场景」。
-    const refIds: string[] = [];
-    const refNames: Record<string, string> = {};
+    // 参考图顺序:出场角色立绘(按 characters 顺序,与分镜描述"参考图N"编号对齐)→ 场景图 → 上一镜尾帧(最后一张,衔接基准);
+    // refNames 供台词按角色名精确绑定,尾帧/场景图标注为非说话人。Agnes reference 模式上限 5 张,超限先去场景图再去多余角色,尾帧必留。
+    const refs: { id: string; name: string }[] = [];
     for (const cname of shot.characters) {
       const src = charNodes.get(cname);
-      if (src) {
-        refIds.push(src);
-        refNames[src] = cname;
+      if (src) refs.push({ id: src, name: cname });
+    }
+    if (sceneNode) refs.push({ id: sceneNode, name: "场景" });
+    if (prevTail) refs.push({ id: prevTail.nodeId, name: "上一镜尾帧" });
+    while (refs.length > 5) {
+      const sceneIdx = refs.map((r) => r.name).lastIndexOf("场景");
+      if (sceneIdx !== -1) {
+        refs.splice(sceneIdx, 1);
+        continue;
       }
+      // 场景图已移除仍超限:从前往后去角色立绘,尾帧必留
+      const charIdx = refs.findIndex((r) => r.name !== "上一镜尾帧");
+      refs.splice(charIdx === -1 ? 0 : charIdx, 1);
     }
-    if (sceneNode) {
-      refIds.push(sceneNode);
-      refNames[sceneNode] = "场景";
-    }
+    const refIds = refs.map((r) => r.id);
+    const refNames: Record<string, string> = Object.fromEntries(refs.map((r) => [r.id, r.name]));
 
     const nodeId = addAgentNode("video", { x: 800, y: i * 320 }, {
       label: `第${shot.index}镜`,
-      prompt: `${stylePrompt},${shot.description}`,
+      prompt: prevTail
+        ? `${stylePrompt},${shot.description},最后一张参考图是上一镜结尾画面,本镜开头镜头的构图、人物位置与场景状态必须与它自然衔接延续`
+        : `${stylePrompt},${shot.description}`,
       dialogue: shot.dialogue.length ? shot.dialogue.join("\n") : undefined,
       seconds: "10",
       aspectRatio: s.aspectRatio,
@@ -318,6 +368,26 @@ async function runStoryboardAndShots(stylePrompt: string) {
     // 单镜失败跳过不阻塞，标记为 skipped
     shots[i] = { ...shots[i], status: ok ? "done" : "skipped" };
     patch({ shots: [...shots] });
+
+    // 生成成功则截取尾帧供下一镜衔接;失败则清空,下一镜降级为无尾帧
+    if (!ok || i + 1 >= shots.length || aborted) {
+      prevTail = null;
+      continue;
+    }
+    const doneNode = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
+    const mediaId = doneNode?.data.mediaId;
+    const tailUrl = mediaId ? await extractLastFrameUrl(mediaId) : null;
+    if (tailUrl) {
+      const tailNodeId = addAgentNode("image", { x: 620, y: i * 320 + 160 }, {
+        label: `第${shot.index}镜尾帧`,
+        prompt: `第${shot.index}镜结尾画面(自动截取,供下一镜开头衔接)`,
+        remoteUrl: tailUrl,
+        status: "done",
+      });
+      prevTail = { nodeId: tailNodeId, url: tailUrl };
+    } else {
+      prevTail = null;
+    }
   }
 
   // ---- assembly：按序填时间线（仅成功的镜） ----

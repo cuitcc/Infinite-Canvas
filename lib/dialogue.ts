@@ -32,7 +32,7 @@ export function buildDialogueInjection(dialogue: string, referenceCount: number,
         .map((name, i) => ({ name, i }))
         .filter(({ name }) => !parsed.some((p) => p.speaker === name))
         .map(({ name, i }) =>
-          `第${i + 1}张参考图中的${name}不说台词${name.includes("场景") ? ",仅作场景背景参考" : ",保持倾听和自然反应"}`);
+          `第${i + 1}张参考图中的${name}不说台词${name.includes("场景") || name.includes("尾帧") ? ",仅作画面衔接参考" : ",保持倾听和自然反应"}`);
       return `${header}\n${parts.join("\n")}${listeners.length ? `\n${listeners.join("，")}` : ""}`;
     }
   }
