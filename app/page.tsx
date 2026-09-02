@@ -19,6 +19,7 @@ import { AudioNodeView } from "@/components/AudioNode";
 import { TimelinePanel } from "@/components/TimelinePanel";
 import { NodeConfigPanel } from "@/components/NodeConfigPanel";
 import { ModelManagerModal } from "@/components/ModelManagerModal";
+import { AgentPanel } from "@/components/AgentPanel";
 
 import { TextNodeView } from "@/components/TextNode";
 
@@ -59,6 +60,7 @@ function CanvasPage() {
   const [loaded, setLoaded] = useState(false);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [showModelManager, setShowModelManager] = useState(false);
+  const [showAgent, setShowAgent] = useState(false);
 
   const selectedNode = nodes.find((n) => n.selected) ?? null;
 
@@ -207,6 +209,9 @@ function CanvasPage() {
           <button onClick={() => setShowModelManager(true)} className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50">
             ⚙ 模型管理
           </button>
+          <button onClick={() => setShowAgent(true)} className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50">
+            🎬 短剧 Agent
+          </button>
           <button onClick={() => handleAddNode("text")} className="rounded-md bg-violet-500 px-2.5 py-1.5 text-[11px] font-medium text-white hover:bg-violet-600">
             + 文本
           </button>
@@ -260,6 +265,10 @@ function CanvasPage() {
 
       {showModelManager && (
         <ModelManagerModal onClose={() => setShowModelManager(false)} />
+      )}
+
+      {showAgent && (
+        <AgentPanel onClose={() => setShowAgent(false)} />
       )}
 
       {exportState && (
