@@ -26,7 +26,7 @@ for (const { id, name, prompt } of entries) {
   const res = await fetch(`${BASE}/images/generations`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${KEY}` },
-    body: JSON.stringify({ model: "agnes-image-2.1-flash", prompt: enhancedPrompt, size: "1K", n: 1 }),
+    body: JSON.stringify({ model: "agnes-image-2.1-flash", prompt: enhancedPrompt, size: "1K" }),
   });
   const json = await res.json();
   const url = json?.data?.[0]?.url;
