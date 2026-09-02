@@ -417,7 +417,8 @@ function VideoUpstreamList({
                   ) : (
                     <span className="flex h-8 w-8 items-center justify-center rounded bg-slate-200 text-[10px] text-slate-500">图</span>
                   )}
-                  <span className="text-[10px] text-slate-500">{edge.data?.role === "first-frame" ? "首帧" : "参考"}</span>
+                  {/* 标签与实际生成模式一致:1 张图=首帧图生视频,2 张及以上=reference 人物参考(按数量自动判断) */}
+                  <span className="text-[10px] text-slate-500">{orderedImageUpstream.length >= 2 ? `参考${idx + 1}` : "首帧"}</span>
                 </div>
               );
             })}
