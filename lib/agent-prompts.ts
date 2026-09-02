@@ -15,10 +15,32 @@ export function extractJson(raw: string): unknown {
   const text = raw.replace(/```(?:json)?/g, "");
   const start = text.indexOf("{");
   if (start === -1) throw new Error("输出中未找到 JSON");
+
+  // 先试整体 parse(首{ 到末 }):天然容忍字符串值内出现花括号
+  const lastEnd = text.lastIndexOf("}");
+  if (lastEnd > start) {
+    try {
+      return JSON.parse(text.slice(start, lastEnd + 1));
+    } catch {
+      // 尾部有杂文本或结构异常,落到逐字扫描
+    }
+  }
+
+  // 逐字扫描配对,跳过字符串内的花括号(处理尾部多余文本的情况)
   let depth = 0;
+  let inString = false;
+  let escaped = false;
   for (let i = start; i < text.length; i++) {
-    if (text[i] === "{") depth++;
-    else if (text[i] === "}") {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
       depth--;
       if (depth === 0) return JSON.parse(text.slice(start, i + 1));
     }

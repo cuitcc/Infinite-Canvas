@@ -20,8 +20,15 @@ export async function POST(req: NextRequest) {
       try {
         const raw = await createAgnesChatCompletion({
           messages: [{ role: "system", content: system }, { role: "user", content: buildUser(task!, input, shotCount) }],
+          maxTokens: 8192,
         });
-        return NextResponse.json({ ok: true, data: extractJson(raw) });
+        try {
+          return NextResponse.json({ ok: true, data: extractJson(raw) });
+        } catch (e) {
+          // 记录原始输出头部,便于定位是截断还是格式跑偏
+          console.error(`[agent/plan] ${task} 第${attempt + 1}次 JSON 解析失败,原始输出头部:`, raw.slice(0, 300));
+          throw e;
+        }
       } catch (e) {
         lastErr = e as Error;
       }
