@@ -1,33 +1,38 @@
 # Task 2 Report
 
-## What was created
-Created `components/PromptOptimizeModal.tsx` exactly as specified in the task brief, with the following:
-- Client-side React component using Next.js 16 App Router
-- Uses `useCanvasStore` for node/edge state and update functions
-- Implements prompt optimization via POST /api/text/format with `optimize-image`/`optimize-video` actions
-- Includes loading, error, and result states
-- Provides apply/retry/close functionality
-- Matches the exact UI and functionality from the brief
+## Changes Made
+Modified `app/api/text/format/route.ts` to add the `extract-dialogue` action to the `FORMAT_ACTIONS` object, right after the `optimize-video` entry.
 
-## Build Output Summary
-Ran `npm run build`:
-- ✅ Compiled successfully
-- ✅ TypeScript compilation passed with zero errors
-- Warnings present in unrelated files (dynamic filesystem access in API routes), no issues in our new component
+## Build Result
+`npm run build` completed successfully with zero TypeScript errors (only unrelated Turbopack filesystem warnings).
 
-## Deviations
-No deviations from the task brief - created the component exactly as specified, no changes made.
+## Curl Test Outputs
+1. GET `/api/text/format`:
+```json
+{
+    "actions": [
+        {"key": "expand", "label": "扩写为画面提示词"},
+        {"key": "polish", "label": "润色"},
+        {"key": "translate-en", "label": "译为英文提示词"},
+        {"key": "storyboard", "label": "拆成分镜脚本"},
+        {"key": "optimize-image", "label": "优化图片提示词"},
+        {"key": "optimize-video", "label": "优化视频提示词"},
+        {"key": "extract-dialogue", "label": "提取台词"}
+    ]
+}
+```
 
-## Fix Report
+2. POST `/api/text/format`:
+```json
+{"ok":true,"result":"少女:原来你也在这里。","action":"提取台词"}
+```
 
-### Changes made to `components/PromptOptimizeModal.tsx`
+## Commit Hash
+027bacf7e309bca758b60ead835f139a2bba36f6
 
-1. **Stale-response race fix**: Added a `useRef<number>` generation counter (`generationRef`). The `optimize` function captures the current generation at start (`const gen = ++generationRef.current`) and ignores responses — does not call `setResult`/`setError`/`setBusy` — if the generation no longer matches (i.e., a newer request started or the modal was closed-and-reopened). The open `useEffect` also increments the generation before triggering the auto-optimize, which ensures close-then-reopen invalidates any in-flight request from the previous open. Both the initial auto-optimize and the "重新优化" button go through the same `optimize` closure with generation gating, making them consistent.
-
-2. **Redundant store subscription consolidation**: Replaced the separate `node = useCanvasStore(...find...)` and `nodes = useCanvasStore(s => s.nodes)` subscriptions with a single `nodes` subscription, deriving `node` via `nodes.find(...)`.
-
-3. **Trailing newline**: Added the missing trailing newline at end of file.
-
-### Build verification
-- Command: `npm run build`
-- Result: Build succeeded with zero TypeScript errors. All app routes compiled cleanly.
+## Self-Review
+- The action is correctly added to the FORMAT_ACTIONS object
+- TypeScript build passes without errors
+- The API endpoint returns the expected actions list
+- The POST endpoint correctly extracts the dialogue line as requested
+- Commit message matches the required format with proper Co-Authored-By trailer

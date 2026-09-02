@@ -1,0 +1,20 @@
+services:
+  infinite-canvas:
+    build: .
+    image: infinite-canvas:latest
+    container_name: infinite-canvas
+    user: "1000:1000"
+    ports:
+      - "3001:3000"
+    environment:
+      AGNES_API_KEY: ${AGNES_API_KEY}
+      ARK_API_KEY: ${ARK_API_KEY:-}
+      AGNES_API_BASE_URL: ${AGNES_API_BASE_URL:-https://api.agnes-ai.cn/v1}
+      TOS_BUCKET: ${TOS_BUCKET:-devops-dev}
+      TOS_PUBLIC_BASE_URL: ${TOS_PUBLIC_BASE_URL:-https://devops-dev.tos-cn-beijing.volces.com}
+      TOS_S3_ENDPOINT: ${TOS_S3_ENDPOINT:-tos-cn-beijing.volces.com}
+      TOS_ACCESS_KEY_ID: ${TOS_ACCESS_KEY_ID}
+      TOS_SECRET_ACCESS_KEY: ${TOS_SECRET_ACCESS_KEY}
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
