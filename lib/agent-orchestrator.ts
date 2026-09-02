@@ -217,17 +217,12 @@ export async function chooseStyle(styleName: string, stylePrompt: string) {
         imageTier: "2K", // 参考图无需 4K:减小图片体积,避免多张 4K 大图把页面卡住
       });
       connect(s0.outlineNodeId!, nodeId);
-      patch({
-        assets: assetList.map((x, j) =>
-          j === i ? { ...x, nodeId, status: "running" } : x,
-        ),
-      });
+      // 原地更新当前项后再写 store:若从旧数组重建,nodeId 会被下一轮 patch 抹掉,导致分镜阶段筛不到参考图
+      assetList[i] = { ...assetList[i], nodeId, status: "running" };
+      patch({ assets: [...assetList] });
       const ok = await generateAndAwait(nodeId);
-      patch({
-        assets: assetList.map((x, j) =>
-          j === i ? { ...x, status: ok ? "done" : "failed" } : x,
-        ),
-      });
+      assetList[i] = { ...assetList[i], status: ok ? "done" : "failed" };
+      patch({ assets: [...assetList] });
     }
 
     await runStoryboardAndShots(stylePrompt);
@@ -315,19 +310,14 @@ async function runStoryboardAndShots(stylePrompt: string) {
     });
     for (const src of refIds) connect(src, nodeId);
 
-    patch({
-      shots: shots.map((x, j) =>
-        j === i ? { ...x, nodeId, status: "running" } : x,
-      ),
-    });
+    // 同 assets 循环:原地更新,避免下一轮 patch 抹掉 nodeId(否则 assembly 装不进时间线)
+    shots[i] = { ...shots[i], nodeId, status: "running" };
+    patch({ shots: [...shots] });
 
     const ok = await generateAndAwait(nodeId);
     // 单镜失败跳过不阻塞，标记为 skipped
-    patch({
-      shots: shots.map((x, j) =>
-        j === i ? { ...x, status: ok ? "done" : "skipped" } : x,
-      ),
-    });
+    shots[i] = { ...shots[i], status: ok ? "done" : "skipped" };
+    patch({ shots: [...shots] });
   }
 
   // ---- assembly：按序填时间线（仅成功的镜） ----

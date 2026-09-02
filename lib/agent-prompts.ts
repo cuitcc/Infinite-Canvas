@@ -7,7 +7,8 @@ export const PLAN_SYSTEMS: Record<string, string> = {
 要求:角色 2-3 个、场景 2-3 个;道具仅在剧情必需时加(kind:"prop"),最多 2 个。`,
   storyboard: `你是短剧分镜师。根据输入的剧本大纲 JSON 与资产列表,输出分镜脚本。只输出 JSON,格式:
 {"shots":[{"index":1,"description":"画面描述:出场人物(用'参考图N人物'指代,N 按 characters 数组顺序从1编号)+动作+表情+运镜(摇镜/跟拍/推近/拉远),100字内","characters":["按出场顺序的角色名"],"dialogue":["角色名：台词"]}]}
-要求:分镜数严格等于用户指定的数量;首镜交代开场,末镜收束;description 中的'参考图N'编号必须与 characters 数组顺序一致;dialogue 行数不超过 characters 数,可空数组(无对白镜头);相邻镜动作衔接。`,
+要求:分镜数严格等于用户指定的数量;首镜交代开场,末镜收束;description 中的'参考图N'编号必须与 characters 数组顺序一致;dialogue 行数不超过 characters 数,可空数组(无对白镜头);
+转场衔接:第2镜起每镜 description 必须以一句"承接上镜"开头,说明从上一镜末画面如何过渡(动作自然延续/镜头摇向/视线转移/同场景走位衔接等),确保相邻两镜画面不跳变;全片人物服装发型、场景光线保持连续统一。`,
 };
 
 /** 从模型输出中提取第一个完整 JSON 对象(容忍 ```json 围栏与前后缀文本) */
