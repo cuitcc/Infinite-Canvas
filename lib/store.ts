@@ -89,6 +89,8 @@ export interface AgentState {
   assets: AgentAsset[];
   shots: AgentShot[];
   error: string | null;
+  /** 记录中止发生在哪个阶段，供面板进度展示使用；未中止或从中止态重启时为 undefined */
+  abortedFrom?: AgentStage;
 }
 
 export interface TimelineClipState {

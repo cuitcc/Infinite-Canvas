@@ -30,17 +30,24 @@ const STAGE_ORDER: Record<AgentStage, number> = {
 
 type StepStatus = "pending" | "running" | "done" | "error";
 
-function getStepStatus(stepKey: AgentStage, current: AgentStage, hasError: boolean): StepStatus {
+function getStepStatus(
+  stepKey: AgentStage,
+  current: AgentStage,
+  hasError: boolean,
+  abortedFrom?: AgentStage,
+): StepStatus {
   const stepIdx = STAGE_ORDER[stepKey];
-  const curIdx = STAGE_ORDER[current];
 
   if (current === "aborted") {
-    // 已中止：已完成的步骤标 done，当前步骤标 error，未开始的标 pending
-    if (stepIdx < curIdx) return "done";
-    if (stepIdx === curIdx) return "error";
+    // 用 abortedFrom 判断中止发生在哪一步；无值时回退到全 pending（旧行为）
+    const fromIdx = abortedFrom ? STAGE_ORDER[abortedFrom] : -1;
+    if (fromIdx < 0) return "pending";
+    if (stepIdx < fromIdx) return "done";
+    if (stepIdx === fromIdx) return "error";
     return "pending";
   }
 
+  const curIdx = STAGE_ORDER[current];
   if (stepIdx < curIdx) return "done";
   if (stepIdx === curIdx) return hasError ? "error" : "running";
   return "pending";
@@ -99,8 +106,21 @@ export function AgentPanel({ onClose }: Props) {
   };
 
   const handleRestart = () => {
-    // 回到 idle 表单：通过重置 agentState 到 null
-    useCanvasStore.getState().setAgentState({ stage: "idle", error: null });
+    // 完整重置 agentState 到初始值，避免上一轮残留（assets/shots/styleName/stylePrompt/outlineJson/abortedFrom 等）
+    useCanvasStore.getState().setAgentState({
+      stage: "idle",
+      theme: "",
+      shotCount: 8,
+      aspectRatio: "9:16",
+      styleName: "",
+      stylePrompt: "",
+      outlineNodeId: null,
+      outlineJson: null,
+      assets: [],
+      shots: [],
+      error: null,
+      abortedFrom: undefined,
+    });
     setTheme("");
   };
 
@@ -173,13 +193,13 @@ export function AgentPanel({ onClose }: Props) {
           </div>
         )}
 
-        {/* 运行阶段：进度列表 + 阶段特有内容 */}
-        {isRunning && (
+        {/* 运行 / 中止阶段：进度列表 + 阶段特有内容 */}
+        {(isRunning || stage === "aborted") && (
           <div className="space-y-4 p-4">
             {/* 进度步骤 */}
             <div className="space-y-2">
               {STEPS.map((step) => {
-                const status = getStepStatus(step.key, stage, !!error);
+                const status = getStepStatus(step.key, stage, !!error, agentState?.abortedFrom);
                 const showCount = step.key === "assets" && totalAssets > 0
                   ? `${doneAssets}/${totalAssets}`
                   : step.key === "shots" && totalShots > 0
@@ -199,6 +219,20 @@ export function AgentPanel({ onClose }: Props) {
                 );
               })}
             </div>
+
+            {/* 中止提示卡 */}
+            {stage === "aborted" && (
+              <div className="flex flex-col items-center justify-center gap-3 rounded-md border border-amber-200 bg-amber-50 p-4 text-center">
+                <span className="text-2xl">⏹</span>
+                <p className="text-sm font-medium text-amber-700">已中止</p>
+                <button
+                  onClick={handleRestart}
+                  className="rounded-md bg-violet-500 px-4 py-2 text-sm font-medium text-white hover:bg-violet-600"
+                >
+                  重新开始
+                </button>
+              </div>
+            )}
 
             {/* style 阶段：风格库 */}
             {stage === "style" && (
@@ -291,19 +325,6 @@ export function AgentPanel({ onClose }: Props) {
           </div>
         )}
 
-        {/* aborted 态 */}
-        {stage === "aborted" && (
-          <div className="flex flex-col items-center justify-center gap-3 p-8 text-center">
-            <span className="text-4xl">⏹</span>
-            <p className="text-sm font-medium text-slate-600">已中止</p>
-            <button
-              onClick={handleRestart}
-              className="mt-2 rounded-md bg-violet-500 px-4 py-2 text-sm font-medium text-white hover:bg-violet-600"
-            >
-              重新开始
-            </button>
-          </div>
-        )}
       </div>
 
       {/* 底部按钮：运行态显示中止 */}

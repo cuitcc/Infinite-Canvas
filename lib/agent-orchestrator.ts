@@ -117,7 +117,13 @@ const patchErr = (nodeId: string, error?: string) =>
 /** 中止当前 Agent 流程 */
 export function abortAgent() {
   aborted = true;
-  patch({ stage: "aborted" });
+  const cur = useCanvasStore.getState().agentState;
+  const curStage = cur?.stage;
+  if (curStage && !["aborted", "idle", "done"].includes(curStage)) {
+    patch({ stage: "aborted", abortedFrom: curStage });
+  } else {
+    patch({ stage: "aborted" });
+  }
 }
 
 /** 大纲 → 风格选择（暂停，等待用户调用 chooseStyle） */
@@ -134,11 +140,14 @@ export async function runAgent(theme: string, shotCount: number, aspectRatio: st
     theme,
     shotCount,
     aspectRatio,
+    styleName: "",
+    stylePrompt: "",
     assets: [],
     shots: [],
     error: null,
     outlineNodeId: null,
     outlineJson: null,
+    abortedFrom: undefined,
   });
 
   try {
