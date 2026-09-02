@@ -11,10 +11,31 @@ function quoteSpoken(line: string): string {
   return `${m[1]}："${m[2].trim()}"`;
 }
 
-/** 台词框内容 → 注入提示词的文本。多行台词且参考图 ≥2 张时按行序绑定参考图;不适用时返回 null(调用方回退到通用注入) */
-export function buildDialogueInjection(dialogue: string, referenceCount: number): string | null {
+/** 台词框内容 → 注入提示词的文本。
+ * speakerMap:第 i+1 张参考图对应的角色名(场景图可标"场景"等非说话人名)。
+ * 提供且每句台词的说话人都能按名字绑定到参考图时,支持 M 句台词 ≤ N 张参考图,不说台词的角色明确保持倾听;
+ * 否则回退:多行台词且行数=参考图数时按行序绑定;都不适用返回 null(调用方回退到通用注入) */
+export function buildDialogueInjection(dialogue: string, referenceCount: number, speakerMap?: string[]): string | null {
   const lines = dialogue.split("\n").map((l) => l.trim()).filter(Boolean);
   if (lines.length === 0) return null;
+
+  if (speakerMap && speakerMap.length === referenceCount) {
+    const parsed = lines.map((line) => {
+      const m = /^([^：:]+)[：:]\s*(.+)$/.exec(line);
+      return { speaker: m ? m[1].trim() : "", text: (m ? m[2] : line).trim() };
+    });
+    const refIndex = (name: string) => speakerMap.findIndex((n) => n === name);
+    if (parsed.length > 0 && parsed.every((p) => p.speaker && p.text && refIndex(p.speaker) >= 0)) {
+      const header = "台词按角色分配,谁说台词谁开口,口型与台词精确同步:";
+      const parts = parsed.map((p) => `第${refIndex(p.speaker) + 1}张参考图中的${p.speaker}说："${p.text}"`);
+      const listeners = speakerMap
+        .map((name, i) => ({ name, i }))
+        .filter(({ name }) => !parsed.some((p) => p.speaker === name))
+        .map(({ name, i }) =>
+          `第${i + 1}张参考图中的${name}不说台词${name.includes("场景") ? ",仅作场景背景参考" : ",保持倾听和自然反应"}`);
+      return `${header}\n${parts.join("\n")}${listeners.length ? `\n${listeners.join("，")}` : ""}`;
+    }
+  }
 
   if (referenceCount >= 2 && lines.length === referenceCount) {
     const header = "台词按角色分配,谁说台词谁开口,其余人物保持倾听,口型与台词精确同步:";

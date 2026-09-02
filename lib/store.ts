@@ -41,6 +41,8 @@ export interface CanvasNodeData extends Record<string, unknown> {
   dialogue?: string;
   /** 视频节点：上游参考图 source node id 顺序 */
   referenceOrder?: string[];
+  /** 视频节点：参考图节点 id → 角色名映射（短剧 Agent 设置），台词按名字精确绑定参考图 */
+  refNames?: Record<string, string>;
   updatedAt?: number;
 }
 
@@ -192,6 +194,13 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     });
     const imageUrls = imageRefs.map((r) => r.url);
 
+    // 参考图名字映射(短剧 Agent 设置):与排序后的参考图对齐,供台词按角色名精确绑定;有缺名则放弃精确绑定
+    const refNames = data.refNames;
+    const speakerMap =
+      refNames && imageRefs.length > 0 && imageRefs.every((r) => refNames[r.id])
+        ? imageRefs.map((r) => refNames[r.id])
+        : undefined;
+
     // 图片→视频:1 张为首帧图生视频;多张为关键帧序列(extra_body.image + keyframes)
     const firstFrameUrl = imageUrls.length === 1 ? imageUrls[0] : undefined;
 
@@ -216,7 +225,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     if (dialogue && data.kind === "video") {
       // 同一台词在画面描述和台词块重复出现会被模型当成两次说话指令,先剥离画面描述里的内嵌台词
       prompt = stripEmbeddedDialogue(prompt, dialogue);
-      const injected = buildDialogueInjection(dialogue, imageUrls.length);
+      const injected = buildDialogueInjection(dialogue, imageUrls.length, speakerMap);
       prompt = `${prompt}\n${injected ?? `人物开口说出台词（人声清晰，口型与台词精确同步）："${dialogue}"`}`;
     }
 

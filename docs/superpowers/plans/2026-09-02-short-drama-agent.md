@@ -12,7 +12,7 @@
 
 - spec：`docs/superpowers/specs/2026-09-02-short-drama-agent-design.md`（先读它）
 - 不新增画布节点类型；Agent 产出全部用现有 text/image/video 节点
-- 分镜 video 节点只连角色立绘作参考图（**不连场景图**，保住台词绑定 refs==lines）
+- 分镜 video 节点参考图 = 出场角色立绘（按 characters 顺序）+ 场景图（最后一张）；节点 data 必须设 `referenceOrder` 与 `refNames`（场景标「场景」），台词由 `buildDialogueInjection(dialogue, n, speakerMap)` 按角色名精确绑定（支持 M 句 ≤ N 张参考图、有人不说台词）
 - 生成一律走现有 `/api/generate/image`、`/api/generate/video`（含 429 重试、台词注入、一致性后缀），编排器不自己拼请求体调 Agnes
 - 视频串行生成：上一镜节点 done/failed 后才创建下一镜
 - UI 文案全部中文；顶栏入口「🎬 短剧 Agent」
@@ -205,6 +205,8 @@ curl -s -X POST http://localhost:3001/api/agent/plan -H "Content-Type: applicati
 
 ### Task 3: store 扩展 + 编排器（大纲/风格/资产阶段）
 
+> 已落地的前置（不必重做）：`lib/dialogue.ts` 的 `buildDialogueInjection(dialogue, n, speakerMap?)` 按角色名精确绑定（M 句 ≤ N 张参考图、不说台词者标注倾听/场景仅作背景）、`CanvasNodeData.refNames` 字段与 `store.ts` 的 speakerMap 计算均已提交。本任务只需实现 agentState + 编排器，并为分镜 video 节点设置 `referenceOrder`/`refNames`。
+
 **Files:**
 - Modify: `lib/store.ts`（追加 agentState 类型与字段、`setAgentState` action）
 - Create: `lib/agent-orchestrator.ts`
@@ -357,18 +359,29 @@ async function runStoryboardAndShots(stylePrompt: string) {
   patch({ shots, stage: "shots" });
   const charNodes = new Map<string, string>();
   for (const a of s.assets) if (a.kind === "character" && a.nodeId && a.status === "done") charNodes.set(a.name, a.nodeId);
+  const sceneNode = s.assets.find((a) => a.kind === "scene" && a.nodeId && a.status === "done")?.nodeId ?? null;
 
   for (let i = 0; i < shots.length; i++) {
     if (aborted) return;
     const shot = shots[i];
+    // 参考图:出场角色立绘在前(按 characters 顺序),场景图最后;refNames 供台词按角色名精确绑定
+    const refIds: string[] = [];
+    const refNames: Record<string, string> = {};
+    for (const cname of shot.characters) {
+      const src = charNodes.get(cname);
+      if (src) { refIds.push(src); refNames[src] = cname; }
+    }
+    if (sceneNode) { refIds.push(sceneNode); refNames[sceneNode] = "场景"; }
     const nodeId = addAgentNode("video", { x: 800, y: i * 320 }, {
       label: `第${shot.index}镜`,
       prompt: `${stylePrompt},${shot.description}`,
       dialogue: shot.dialogue.length ? shot.dialogue.join("\n") : undefined,
       seconds: "10",
       aspectRatio: s.aspectRatio,
+      referenceOrder: refIds,
+      refNames,
     });
-    for (const cname of shot.characters) { const src = charNodes.get(cname); if (src) connect(src, nodeId); }
+    for (const src of refIds) connect(src, nodeId);
     patch({ shots: shots.map((x, j) => j === i ? { ...x, nodeId, status: "running" } : x) });
     const ok = await generateAndAwait(nodeId);
     patch({ shots: shots.map((x, j) => j === i ? { ...x, status: ok ? "done" : "skipped" } : x) });

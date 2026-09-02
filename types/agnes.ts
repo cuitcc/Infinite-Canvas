@@ -126,6 +126,8 @@ export interface CanvasNodeData {
   dialogue?: string;
   /** 视频节点：上游参考图 source node id 顺序 */
   referenceOrder?: string[];
+  /** 视频节点：参考图节点 id → 角色名映射（短剧 Agent 设置），台词按名字精确绑定参考图 */
+  refNames?: Record<string, string>;
   /** 旧字段保留兼容 */
   size?: string;
   width?: number;
