@@ -133,7 +133,12 @@ export async function runAgent(theme: string, shotCount: number, aspectRatio: st
   if (cur && !["idle", "aborted", "done"].includes(cur.stage)) return;
   aborted = false;
   const st = useCanvasStore.getState();
-  if (!st.projectId || !theme.trim()) return;
+  if (!st.projectId) {
+    // 项目未加载时给可见反馈,而非静默返回让用户以为按钮失灵
+    patch({ stage: "idle", error: "项目尚未加载完成,请稍候重试" });
+    return;
+  }
+  if (!theme.trim()) return;
 
   patch({
     stage: "outline",

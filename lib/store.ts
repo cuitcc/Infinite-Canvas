@@ -93,6 +93,21 @@ export interface AgentState {
   abortedFrom?: AgentStage;
 }
 
+/** agentState 的初始值：setAgentState 在 agentState 为 null 时以此为基础创建 */
+export const EMPTY_AGENT_STATE: AgentState = {
+  stage: "idle",
+  theme: "",
+  shotCount: 8,
+  aspectRatio: "9:16",
+  styleName: "",
+  stylePrompt: "",
+  outlineNodeId: null,
+  outlineJson: null,
+  assets: [],
+  shots: [],
+  error: null,
+};
+
 export interface TimelineClipState {
   id: string;
   nodeId: string;
@@ -138,7 +153,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   dirty: false,
   agentState: null,
   setProject: (id) => set({ projectId: id }),
-  setAgentState: (patch) => set((s) => ({ agentState: s.agentState ? { ...s.agentState, ...patch } : s.agentState, dirty: true })),
+  setAgentState: (patch) => set((s) => ({ agentState: { ...EMPTY_AGENT_STATE, ...s.agentState, ...patch }, dirty: true })),
   setGraph: (nodes, edges) => set({ nodes, edges, dirty: false }),
   setTimeline: (clips) => set({ timeline: clips, dirty: true }),
   addNode: (node) => set((s) => ({ nodes: [...s.nodes, node], dirty: true })),
