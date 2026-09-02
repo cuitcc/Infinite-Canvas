@@ -46,6 +46,51 @@ export interface CanvasNodeData extends Record<string, unknown> {
   updatedAt?: number;
 }
 
+// ==================== Agent 编排器相关类型 ====================
+
+export type AgentStage = "idle" | "outline" | "style" | "assets" | "storyboard" | "shots" | "assembly" | "done" | "aborted";
+
+export interface AgentAsset {
+  id: string;
+  kind: "character" | "scene" | "prop";
+  name: string;
+  prompt: string;
+  nodeId: string | null;
+  status: "pending" | "running" | "done" | "failed";
+}
+
+export interface AgentShot {
+  index: number;
+  description: string;
+  dialogue: string[];
+  characters: string[];
+  scene: string;
+  nodeId: string | null;
+  status: "pending" | "running" | "done" | "failed" | "skipped";
+}
+
+export interface AgentState {
+  stage: AgentStage;
+  theme: string;
+  shotCount: number;
+  aspectRatio: string;
+  styleName: string;
+  stylePrompt: string;
+  outlineNodeId: string | null;
+  /** outline 阶段拿到的结构化大纲 JSON，供后续阶段复用，避免重复 LLM 调用 */
+  outlineJson?: {
+    title: string;
+    genre: string;
+    synopsis: string;
+    characters: { name: string; appearance: string }[];
+    scenes: { name: string; description: string }[];
+    script: string;
+  } | null;
+  assets: AgentAsset[];
+  shots: AgentShot[];
+  error: string | null;
+}
+
 export interface TimelineClipState {
   id: string;
   nodeId: string;
@@ -62,7 +107,9 @@ interface CanvasStore {
   edges: Edge[];
   timeline: TimelineClipState[];
   dirty: boolean;
+  agentState: AgentState | null;
   setProject: (id: string) => void;
+  setAgentState: (patch: Partial<AgentState>) => void;
   setGraph: (nodes: Node<CanvasNodeData>[], edges: Edge[]) => void;
   setTimeline: (clips: TimelineClipState[]) => void;
   addNode: (node: Node<CanvasNodeData>) => void;
@@ -87,7 +134,9 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   edges: [],
   timeline: [],
   dirty: false,
+  agentState: null,
   setProject: (id) => set({ projectId: id }),
+  setAgentState: (patch) => set((s) => ({ agentState: s.agentState ? { ...s.agentState, ...patch } : s.agentState, dirty: true })),
   setGraph: (nodes, edges) => set({ nodes, edges, dirty: false }),
   setTimeline: (clips) => set({ timeline: clips, dirty: true }),
   addNode: (node) => set((s) => ({ nodes: [...s.nodes, node], dirty: true })),
