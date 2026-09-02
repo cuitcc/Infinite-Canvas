@@ -2,7 +2,7 @@
 
 import { create } from "zustand";
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type EdgeChange, type Node, type NodeChange } from "@xyflow/react";
-import { buildDialogueInjection } from "./dialogue";
+import { buildDialogueInjection, stripEmbeddedDialogue } from "./dialogue";
 
 export type NodeKind = "text" | "image" | "video" | "upload" | "audio";
 
@@ -214,6 +214,8 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     // 多行台词 + 多张参考图时按行序绑定参考图(lib/dialogue.ts),否则用通用注入
     const dialogue = data.dialogue?.trim();
     if (dialogue && data.kind === "video") {
+      // 同一台词在画面描述和台词块重复出现会被模型当成两次说话指令,先剥离画面描述里的内嵌台词
+      prompt = stripEmbeddedDialogue(prompt, dialogue);
       const injected = buildDialogueInjection(dialogue, imageUrls.length);
       prompt = `${prompt}\n${injected ?? `人物开口说出台词（人声清晰，口型与台词精确同步）："${dialogue}"`}`;
     }
