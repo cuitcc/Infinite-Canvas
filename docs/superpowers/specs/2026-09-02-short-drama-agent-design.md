@@ -44,7 +44,7 @@ idle → outline → style(⏸唯一暂停点) → assets → storyboard → sho
 | style | 面板弹出风格库，用户选定后得 stylePrompt | 无节点（面板操作） |
 | assets | plan API 拆解资产：每个角色出立绘提示词、每个场景出场景图提示词、道具若干；逐个文生图（串行，失败自动重试一次） | 每个 asset 一个 image 节点，label「角色-女一」「场景-庭院」「道具-玉佩」，prompt=stylePrompt+资产描述，连大纲节点 |
 | storyboard | plan API 生成 8 镜分镜 JSON：每镜画面描述（含运镜）、出场角色、场景、该镜台词 | 分镜脚本写入面板（不建 text 节点，避免画布冗余） |
-| shots | 每镜创建 video 节点：自动连线该镜出场角色的 image 节点（参考图，保证人物一致性）+ 场景 image 节点；prompt=stylePrompt+分镜描述（含运镜）；台词写入节点 dialogue 字段；**串行**生成（上一镜完成才创建下一镜任务，天然避开 1/min 限流）；单镜失败自动重试一次，仍失败标记 error 并跳过继续 | 每镜一个 video 节点，label「第1镜」…「第8镜」 |
+| shots | 每镜创建 video 节点：自动连线该镜出场**角色的 image 节点**（参考图，保证人物一致性）；场景一致性靠提示词描述+风格（场景图**不**作视频参考图——台词绑定注入要求参考图数=台词行数，混入场景图会破坏绑定）；prompt=stylePrompt+分镜描述（含运镜）；台词写入节点 dialogue 字段；**串行**生成（上一镜完成才创建下一镜任务，天然避开 1/min 限流）；单镜失败自动重试一次，仍失败标记 error 并跳过继续 | 每镜一个 video 节点，label「第1镜」…「第8镜」 |
 | assembly | 按剧本顺序把完成分镜的 mediaId 写入 timeline（trimIn=0），提示用户点导出 | timeline 填充 |
 
 ## 画布布局
