@@ -214,6 +214,7 @@ export async function chooseStyle(styleName: string, stylePrompt: string) {
       const nodeId = addAgentNode("image", { x: 400, y: i * 320 }, {
         label: `${kindLabel}-${a.name}`,
         prompt: `${stylePrompt},${a.prompt}`,
+        imageTier: "2K", // 参考图无需 4K:减小图片体积,避免多张 4K 大图把页面卡住
       });
       connect(s0.outlineNodeId!, nodeId);
       patch({
