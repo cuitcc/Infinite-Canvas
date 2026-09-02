@@ -25,7 +25,7 @@ let aborted = false;
 let nodeSeq = 0;
 
 const agentNodeId = (p: string) =>
-  `agent-${p}-${Date.now().toString(36)}-${nodeSeq++}`;
+  `agent-${p}-${Date.now().toString(36)}-${nodeSeq++}-${Math.random().toString(36).slice(2, 7)}`;
 
 // ==================== 工具函数 ====================
 
@@ -87,12 +87,23 @@ async function waitForNode(nodeId: string, timeoutMs = 15 * 60_000): Promise<boo
 
 /** 触发节点生成并等待；失败自动重试一次，再失败返回 false */
 async function generateAndAwait(nodeId: string): Promise<boolean> {
-  useCanvasStore.getState().triggerGeneration(nodeId);
+  // await 并兜住 triggerGeneration 的同步失败(节点丢失/projectId 为空等),避免 unhandled rejection 与死等超时
+  try {
+    await useCanvasStore.getState().triggerGeneration(nodeId);
+  } catch (e) {
+    console.error("[agent] triggerGeneration failed", nodeId, e);
+    return false;
+  }
   const ok = await waitForNode(nodeId);
   if (!ok && !aborted) {
     // 失败自动重试一次：清掉 error，重置为 queued，再触发
     patchErr(nodeId, undefined);
-    useCanvasStore.getState().triggerGeneration(nodeId);
+    try {
+      await useCanvasStore.getState().triggerGeneration(nodeId);
+    } catch (e) {
+      console.error("[agent] triggerGeneration retry failed", nodeId, e);
+      return false;
+    }
     return waitForNode(nodeId);
   }
   return ok;
@@ -111,6 +122,9 @@ export function abortAgent() {
 
 /** 大纲 → 风格选择（暂停，等待用户调用 chooseStyle） */
 export async function runAgent(theme: string, shotCount: number, aspectRatio: string) {
+  const cur = useCanvasStore.getState().agentState;
+  // 并发保护:流水线运行中拒绝重复启动(避免 aborted 标志与 agentState 被第二路流程破坏)
+  if (cur && !["idle", "aborted", "done"].includes(cur.stage)) return;
   aborted = false;
   const st = useCanvasStore.getState();
   if (!st.projectId || !theme.trim()) return;
