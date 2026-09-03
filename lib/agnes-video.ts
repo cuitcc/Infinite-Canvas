@@ -60,14 +60,16 @@ export function buildAgnesVideoRequest(input: CreateVideoInput, model = DEFAULT_
     return body;
   }
 
-  // 新版 2.5-flash: mode + seconds + size(720P) + aspect_ratio
-  // 注意:2.5-flash 不接受 negative_prompt 字段(400 invalid_request),一律不下发
+  // 新版 2.5 系: mode + seconds + size + aspect_ratio
+  // 注意:2.5 系不接受 negative_prompt 字段(400 invalid_request),一律不下发
   const agnesMode = mapGenerationModeToAgnesMode(input);
+  const flashOnly = !model || model === "agnes-video-2.5-flash";
   const body: AgnesCreateVideoBody = {
-    model: "agnes-video-2.5-flash",
+    // 基础版 agnes-video-2.5 支持 720P/960P/2K,flash 仅 720P
+    model: flashOnly ? "agnes-video-2.5-flash" : "agnes-video-2.5",
     prompt: input.prompt,
     mode: agnesMode,
-    size: "720P",
+    size: flashOnly ? "720P" : ((input.size as "720P" | "960P" | "2K") ?? "960P"),
     seconds: input.seconds ?? "5",
     aspect_ratio: input.aspect_ratio ?? "16:9",
   };
@@ -152,7 +154,11 @@ export async function resolveAgnesVideoUrl(task: AgnesVideoTask): Promise<AgnesV
     return task;
   }
 
-  const model = task.model === "agnes-video-v2.0" ? "agnes-video-v2.0" : DEFAULT_VIDEO_MODEL;
+  const model = task.model === "agnes-video-v2.0"
+    ? "agnes-video-v2.0"
+    : task.model?.startsWith("agnes-video")
+      ? task.model
+      : DEFAULT_VIDEO_MODEL;
   const baseUrl = (process.env.AGNES_API_BASE_URL || DEFAULT_BASE_URL).replace(/\/v1\/?$/, "");
   const url = `${baseUrl}/agnesapi?video_id=${encodeURIComponent(task.video_id)}&model_name=${encodeURIComponent(model)}`;
 

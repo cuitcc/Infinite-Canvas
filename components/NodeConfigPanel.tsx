@@ -104,8 +104,18 @@ export function NodeConfigPanel({ node, onClose }: { node: Node<CanvasNodeData>;
           <div className="grid grid-cols-2 gap-3 text-xs text-slate-600 md:grid-cols-3">
             <label className="flex flex-col gap-1">
               模型
-              <select value={data.model ?? "agnes-video-2.5-flash"} onChange={(e) => updateNodeData(id, { model: e.target.value })} className="rounded border border-slate-200 bg-white px-2 py-1.5">
+              <select value={data.model ?? "agnes-video-2.5"} onChange={(e) => updateNodeData(id, { model: e.target.value })} className="rounded border border-slate-200 bg-white px-2 py-1.5">
                 {videoModels.map((m) => <option key={m.modelId} value={m.modelId}>{m.label}</option>)}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              清晰度
+              <select
+                value={(data.videoSize as string | undefined) ?? "960P"}
+                onChange={(e) => updateNodeData(id, { videoSize: e.target.value })}
+                className="rounded border border-slate-200 bg-white px-2 py-1.5"
+              >
+                {["720P", "960P", "2K"].map((s) => <option key={s} value={s}>{s}{s !== "720P" ? " (仅 2.5 高清版)" : ""}</option>)}
               </select>
             </label>
             <label className="flex flex-col gap-1">

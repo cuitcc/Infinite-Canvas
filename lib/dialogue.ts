@@ -27,12 +27,12 @@ export function buildDialogueInjection(dialogue: string, referenceCount: number,
     const refIndex = (name: string) => speakerMap.findIndex((n) => n === name);
     if (parsed.length > 0 && parsed.every((p) => p.speaker && p.text && refIndex(p.speaker) >= 0)) {
       const header = "台词按角色分配,谁说台词谁开口,口型与台词精确同步:";
-      const parts = parsed.map((p) => `第${refIndex(p.speaker) + 1}张参考图中的${p.speaker}说："${p.text}"`);
+      const parts = parsed.map((p) => `<Picture ${refIndex(p.speaker) + 1}>中的${p.speaker}说："${p.text}"`);
       const listeners = speakerMap
         .map((name, i) => ({ name, i }))
         .filter(({ name }) => !parsed.some((p) => p.speaker === name))
         .map(({ name, i }) =>
-          `第${i + 1}张参考图中的${name}不说台词${/场景|尾帧|^道具·/.test(name) ? ",仅作画面参考" : ",保持倾听和自然反应"}`);
+          `<Picture ${i + 1}>中的${name}不说台词${/场景|尾帧|^道具·/.test(name) ? ",仅作画面参考" : ",保持倾听和自然反应"}`);
       // 多人台词时显式禁止"一人念完全部":模型容易把多句台词都交给主角色
       const solo = parsed.length >= 2
         ? "\n以上台词由各自角色分别开口,一人只说自己名下的一句,禁止任何角色替他人念台词,禁止重复台词。"
@@ -52,7 +52,7 @@ export function buildDialogueInjection(dialogue: string, referenceCount: number,
       const speaker = m?.[1]?.trim() ?? "";
       const text = (m?.[2] ?? line).trim();
       const who = speaker || "人物";
-      return `第${i + 1}张参考图中的${who}说："${text}"`;
+      return `<Picture ${i + 1}>中的${who}说："${text}"`;
     });
     return `${header}\n${parts.join("\n")}`;
   }

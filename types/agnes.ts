@@ -11,6 +11,8 @@ export interface CreateVideoInput {
   /** 新模型使用 seconds + aspect_ratio 替代 height/width/num_frames/frame_rate */
   seconds?: string;
   aspect_ratio?: string;
+  /** 分辨率档位:2.5 基础版支持 720P/960P/2K,flash 仅 720P */
+  size?: string;
   /** 旧版 agnes-video-v2.0 字段，保留兼容 */
   height?: number;
   width?: number;
@@ -21,16 +23,16 @@ export interface CreateVideoInput {
 }
 
 export interface AgnesCreateVideoBody {
-  model: "agnes-video-2.5-flash" | "agnes-video-v2.0";
+  model: "agnes-video-2.5" | "agnes-video-2.5-flash" | "agnes-video-v2.0";
   prompt: string;
-  /** 2.5-flash 必填；2.0 不使用该字段 */
+  /** 2.5 系必填；2.0 不使用该字段 */
   mode?: AgnesVideoMode;
   image?: string;
-  /** 2.5-flash reference 模式最多 5 张 */
+  /** reference 模式最多 5 张 */
   images?: string[];
   audios?: string[];
-  /** 2.5-flash 固定 720P，由 aspect_ratio 控制分辨率 */
-  size?: "720P";
+  /** flash 固定 720P;2.5 基础版支持 720P/960P/2K */
+  size?: "720P" | "960P" | "2K";
   seconds?: string;
   aspect_ratio?: string;
   first_frame?: string;

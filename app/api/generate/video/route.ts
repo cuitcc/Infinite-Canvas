@@ -88,7 +88,7 @@ async function normalizeAudioUrls(urls: string[]): Promise<string[]> {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { projectId, nodeId, prompt, image, referenceUrls = [], audioUrls = [], seconds, aspectRatio, negativePrompt, seed, model } = body as {
+    const { projectId, nodeId, prompt, image, referenceUrls = [], audioUrls = [], seconds, aspectRatio, negativePrompt, seed, model, size } = body as {
       projectId: string;
       nodeId: string;
       prompt: string;
@@ -100,6 +100,7 @@ export async function POST(req: NextRequest) {
       negativePrompt?: string;
       seed?: number;
       model?: string;
+      size?: string;
     };
 
     if (!prompt || !prompt.trim()) {
@@ -142,6 +143,7 @@ export async function POST(req: NextRequest) {
         audios,
         seconds,
         aspect_ratio: aspectRatio,
+        size,
         negative_prompt: negativePrompt,
         seed,
       };

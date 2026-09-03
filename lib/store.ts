@@ -27,6 +27,8 @@ export interface CanvasNodeData extends Record<string, unknown> {
   imageTier?: string;
   imageRatio?: string;
   size?: string;
+  /** 视频节点：分辨率档位 720P/960P/2K(仅 agnes-video-2.5 基础版支持非 720P) */
+  videoSize?: string;
   width?: number;
   height?: number;
   numFrames?: number;
@@ -316,7 +318,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         const res = await fetch("/api/generate/video", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projectId: s.projectId, nodeId, prompt, image: firstFrameUrl, referenceUrls: imageUrls, audioUrls, seconds: data.seconds, aspectRatio: data.aspectRatio, negativePrompt: data.negativePrompt, seed: data.seed, model: data.model }),
+          body: JSON.stringify({ projectId: s.projectId, nodeId, prompt, image: firstFrameUrl, referenceUrls: imageUrls, audioUrls, seconds: data.seconds, aspectRatio: data.aspectRatio, negativePrompt: data.negativePrompt, seed: data.seed, model: data.model, size: data.videoSize }),
         });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || "生成失败");

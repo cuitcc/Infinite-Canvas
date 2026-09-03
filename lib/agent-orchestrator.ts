@@ -382,16 +382,24 @@ async function runStoryboardAndShots(stylePrompt: string) {
       return !!m && speakerSet.has(m[1].trim());
     });
 
-    // 参考图仅锁定长相/服装:立绘是正面站姿,不声明会被模型连姿势一起复制,导致全员面向镜头站桩
-    const poseNote = "参考图仅用于锁定人物长相、发型与服装,人物的动作、身体朝向和镜头机位以提示词描述为准,不要复制参考图中的站姿";
+    // 官方 <Picture N> 占位符逐张声明参考图用途:只锁外形,动作朝向机位以提示词为准(立绘正面站姿会被连姿势复制)
+    const identityNote = refs
+      .map((r, i) => {
+        const p = `<Picture ${i + 1}>`;
+        if (r.name === "场景") return `${p}为场景与氛围参考`;
+        if (r.name === "上一镜尾帧") return `${p}是上一镜结尾画面:人物位置与场景状态从它自然延续,但本镜必须换新机位重新起幅,禁止沿用上一镜构图景别`;
+        if (r.name.startsWith("道具·")) return `${p}为道具${r.name.slice(3)}的形制参考`;
+        return `${p}为${r.name}的长相、发型与服装参考,只取外形,其站姿与朝向不作参考`;
+      })
+      .join(";");
     const nodeId = addAgentNode("video", { x: 800, y: i * 320 }, {
       label: `第${shot.index}镜`,
-      prompt: prevTail
-        ? `${stylePrompt},${shot.description},${poseNote},最后一张参考图是上一镜结尾画面:人物位置、场景与画面状态从它自然延续,但禁止沿用上一镜的构图和景别,本镜必须换新机位重新起幅并完成明确的运镜`
-        : `${stylePrompt},${shot.description},${poseNote}`,
+      prompt: `${stylePrompt},${shot.description},${identityNote}`,
       dialogue: boundDialogue.length ? boundDialogue.join("\n") : undefined,
       seconds: "10",
       aspectRatio: s.aspectRatio,
+      model: "agnes-video-2.5",
+      videoSize: "960P",
       referenceOrder: refIds,
       refNames,
     });
