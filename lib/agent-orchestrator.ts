@@ -375,6 +375,12 @@ async function runStoryboardAndShots(stylePrompt: string) {
     const refIds = refs.map((r) => r.id);
     const refNames: Record<string, string> = Object.fromEntries(refs.map((r) => [r.id, r.name]));
 
+    // 尾帧首帧声明放提示词最前(开头 token 权重最高,埋在 200 字后实测会被弱化);identityNote 里的尾帧从句二次强化
+    const tailIdx = refs.findIndex((r) => r.name === "上一镜尾帧");
+    const tailLead = tailIdx >= 0
+      ? `本镜视频必须从<Picture ${tailIdx + 1}>(上一镜结尾画面)起播,开头画面与它完全一致,`
+      : "";
+
     // 台词只保留说话人能绑定到参考图的行:否则 buildDialogueInjection 精确绑定整体失效,
     // 回退成整块引号注入,模型会让第一个角色念完全部台词
     const speakerSet = new Set(refs.map((r) => r.name));
@@ -393,14 +399,14 @@ async function runStoryboardAndShots(stylePrompt: string) {
         return `${p}为${r.name}的长相、发型与服装参考,只取外形,其站姿与朝向不作参考`;
       })
       .join(";");
-    // 声音设计(官方六要素之一):有台词靠注入锁定人声;无台词用正面声音描述压住旁白幻觉
-    // (否定式"不出现人声"实测无效,生视频模型默认爱加解说,必须具体描述画面内声音把它填满)
+    // 声音设计(官方六要素之一):有台词靠注入锁定人声(注入块在 soundNote 之后拼接,故用"台词块"指代);
+    // 无台词用正面声音描述压住旁白幻觉(否定式实测无效,必须具体描述画面内声音把它填满)
     const soundNote = boundDialogue.length
-      ? "音轨仅包含上述角色台词人声与现场动作音效"
+      ? "音轨仅包含台词块中角色的人声与现场动作音效"
       : "音轨只有画面内的现场声:脚步声、衣物摩擦声、器物声响与自然环境音,没有解说旁白,没有任何说话声";
     const nodeId = addAgentNode("video", { x: 800, y: i * 320 }, {
       label: `第${shot.index}镜`,
-      prompt: `${stylePrompt},${shot.description},${identityNote},${soundNote}`,
+      prompt: `${stylePrompt},${tailLead}${shot.description},${identityNote},${soundNote}`,
       dialogue: boundDialogue.length ? boundDialogue.join("\n") : undefined,
       seconds: "10",
       aspectRatio: s.aspectRatio,

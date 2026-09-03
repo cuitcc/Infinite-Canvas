@@ -33,11 +33,12 @@ export function buildDialogueInjection(dialogue: string, referenceCount: number,
         .filter(({ name }) => !parsed.some((p) => p.speaker === name))
         .map(({ name, i }) =>
           `<Picture ${i + 1}>中的${name}不说台词${/场景|尾帧|^道具·/.test(name) ? ",仅作画面参考" : ",保持倾听和自然反应"}`);
-      // 多人台词时显式禁止"一人念完全部":模型容易把多句台词都交给主角色
-      const solo = parsed.length >= 2
-        ? "\n以上台词由各自角色分别开口,一人只说自己名下的一句,禁止任何角色替他人念台词,禁止重复台词。"
-        : "";
-      return `${header}\n${parts.join("\n")}${solo}${listeners.length ? `\n${listeners.join("，")}` : ""}`;
+      // 多人台词时显式禁止"一人念完全部":模型容易把多句台词都交给主角色;
+      // 台词总量硬性封顶:模型念完给定句后会自行发挥延伸出大段新台词
+      const closing = parsed.length >= 2
+        ? "\n以上台词由各自角色分别开口,一人只说自己名下的一句,禁止任何角色替他人念台词,禁止重复台词;台词全文只有这些,禁止增加、改写或延伸任何台词,不加旁白解说。"
+        : "\n台词全文只有这一句,逐字念出,禁止增加、改写或延伸任何台词,禁止重复,不加旁白解说,念完即止。";
+      return `${header}\n${parts.join("\n")}${closing}${listeners.length ? `\n${listeners.join("，")}` : ""}`;
     }
   }
 
@@ -66,10 +67,10 @@ export function buildDialogueInjection(dialogue: string, referenceCount: number,
   if (named.length > 0 && named.every((n) => n && n.speaker && n.text)) {
     const header = "台词按角色分配,谁说台词谁开口,口型与台词精确同步:";
     const parts = named.map((n) => `${n!.speaker}说："${n!.text}"`);
-    const solo = named.length >= 2
-      ? "\n以上台词由各自角色分别开口,一人只说自己名下的一句,禁止任何角色替他人念台词,禁止重复台词。"
-      : "";
-    return `${header}\n${parts.join("\n")}${solo}`;
+    const closing = named.length >= 2
+      ? "\n以上台词由各自角色分别开口,一人只说自己名下的一句,禁止任何角色替他人念台词,禁止重复台词;台词全文只有这些,禁止增加、改写或延伸任何台词,不加旁白解说。"
+      : "\n台词全文只有这一句,逐字念出,禁止增加、改写或延伸任何台词,禁止重复,不加旁白解说,念完即止。";
+    return `${header}\n${parts.join("\n")}${closing}`;
   }
 
   return null;
