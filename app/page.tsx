@@ -10,7 +10,8 @@ import {
   useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useCanvasStore, normalizeKind, type CanvasNodeData } from "@/lib/store";
+import { useCanvasStore, normalizeKind, EMPTY_AGENT_STATE, type CanvasNodeData } from "@/lib/store";
+import { abortAgent } from "@/lib/agent-orchestrator";
 import { DEFAULT_EDGE_VOICE } from "@/lib/edge-tts-voices";
 import { ImageNodeView } from "@/components/ImageNode";
 import { VideoNodeView } from "@/components/VideoNode";
@@ -168,6 +169,31 @@ function CanvasPage() {
     spawnNode(kind, { x: 120 + Math.random() * 240, y: 100 + Math.random() * 160 });
   }, [spawnNode]);
 
+  // 一键清空:确认后中止进行中的 Agent 流程,清空节点/连线/时间线并复位 Agent 状态
+  const handleClearCanvas = useCallback(async () => {
+    if (!projectId) return;
+    if (!window.confirm("确定清空画布？所有节点、连线和时间线片段将被删除，且不可恢复。")) return;
+    const st = useCanvasStore.getState();
+    if (st.agentState && !["idle", "aborted", "done"].includes(st.agentState.stage)) abortAgent();
+    try {
+      await Promise.all([
+        fetch(`/api/projects/${projectId}/graph`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nodes: [], edges: [] }),
+        }),
+        fetch(`/api/projects/${projectId}/timeline`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ clips: [] }),
+        }),
+      ]);
+    } catch { /* 网络失败也照常清空本地,下次自动保存会再同步 */ }
+    setGraph([], []);
+    st.setTimeline([]);
+    st.setAgentState({ ...EMPTY_AGENT_STATE });
+  }, [projectId, setGraph]);
+
   const [exportState, setExportState] = useState<{ status: string; progress?: string; output?: string; error?: string } | null>(null);
   const startExport = useCallback(async () => {
     if (!projectId) return;
@@ -208,6 +234,9 @@ function CanvasPage() {
           {saveState === "saving" ? "保存中…" : saveState === "error" ? "保存失败" : "已保存"}
         </span>
         <div className="ml-auto flex gap-1.5">
+          <button onClick={handleClearCanvas} className="rounded-md border border-rose-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-rose-500 hover:bg-rose-50">
+            清空画布
+          </button>
           <button onClick={() => setShowModelManager(true)} className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50">
             ⚙ 模型管理
           </button>
