@@ -25,8 +25,8 @@ export async function POST(req: NextRequest) {
         try {
           return NextResponse.json({ ok: true, data: extractJson(raw) });
         } catch (e) {
-          // 记录原始输出头部,便于定位是截断还是格式跑偏
-          console.error(`[agent/plan] ${task} 第${attempt + 1}次 JSON 解析失败,原始输出头部:`, raw.slice(0, 300));
+          // 记录原始输出头部与尾部,便于定位是截断、闭合符错序还是格式跑偏
+          console.error(`[agent/plan] ${task} 第${attempt + 1}次 JSON 解析失败(长度${raw.length}),原始输出头部:`, raw.slice(0, 300), "尾部:", raw.slice(-200));
           throw e;
         }
       } catch (e) {

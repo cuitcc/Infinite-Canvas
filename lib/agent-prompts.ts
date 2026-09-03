@@ -1,3 +1,5 @@
+import { jsonrepair } from "jsonrepair";
+
 export const PLAN_SYSTEMS: Record<string, string> = {
   outline: `你是短剧编剧。根据用户给的主题创作单集短剧大纲。只输出 JSON,不要任何解释或代码块标记,格式:
 {"title":"片名","genre":"类型","synopsis":"100字内剧情梗概","characters":[{"name":"角色名","appearance":"外貌/年龄/服装细节,40字内,用于生成角色立绘"}],"scenes":[{"name":"场景名","description":"场景视觉描述,30字内"}],"script":"分场剧情与对白全文,每行格式 角色名：台词,600字内"}
@@ -47,8 +49,22 @@ export function extractJson(raw: string): unknown {
     else if (ch === "{") depth++;
     else if (ch === "}") {
       depth--;
-      if (depth === 0) return JSON.parse(text.slice(start, i + 1));
+      if (depth === 0) {
+        // 配对成功但内容仍可能非法(如闭合符错序):抛错则落到下方 jsonrepair 兜底
+        try {
+          return JSON.parse(text.slice(start, i + 1));
+        } catch {
+          break;
+        }
+      }
     }
   }
-  throw new Error("JSON 不完整");
+
+  // 兜底:模型会漏写末尾闭合符或闭合符错序(实测 agnes-2.5-flash 分镜输出丢失末镜对象的 },
+  // 尾部变成 "]]}} ),jsonrepair 修复后再 parse
+  try {
+    return JSON.parse(jsonrepair(text.slice(start)));
+  } catch {
+    throw new Error("JSON 不完整");
+  }
 }
