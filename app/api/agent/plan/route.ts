@@ -4,8 +4,9 @@ import { PLAN_SYSTEMS, extractJson } from "@/lib/agent-prompts";
 
 function buildUser(task: string, input: string, shotCount?: number): string {
   if (task === "storyboard") {
-    const { outline, assetNames, count } = JSON.parse(input) as { outline: unknown; assetNames: string[]; count: number };
-    return `分镜数量:${count}\n剧本大纲:\n${JSON.stringify(outline)}\n可用资产:${assetNames.join("、")}`;
+    const { outline, assetNames, sceneNames, count } = JSON.parse(input) as { outline: unknown; assetNames: string[]; sceneNames?: string[]; count: number };
+    const scenes = sceneNames?.length ? `\n可用场景:${sceneNames.join("、")}` : "";
+    return `分镜数量:${count}\n剧本大纲:\n${JSON.stringify(outline)}\n可用角色:${assetNames.join("、")}${scenes}`;
   }
   return shotCount ? `${input}\n(分镜数量备用:${shotCount})` : input;
 }

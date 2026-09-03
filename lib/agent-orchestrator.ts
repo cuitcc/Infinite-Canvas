@@ -16,7 +16,7 @@ type Outline = {
 type OutlineAsset = { kind: "character" | "scene" | "prop"; name: string; prompt: string };
 
 type Storyboard = {
-  shots: { index: number; description: string; characters: string[]; dialogue: string[] }[];
+  shots: { index: number; scene?: string; description: string; characters: string[]; dialogue: string[] }[];
 };
 
 // ==================== 模块级状态 ====================
@@ -283,12 +283,16 @@ async function runStoryboardAndShots(stylePrompt: string) {
   const assetNames = s.assets
     .filter((a) => a.kind === "character")
     .map((a) => a.name);
+  const sceneNames = s.assets
+    .filter((a) => a.kind === "scene")
+    .map((a) => a.name);
 
   const shotsPlan = await plan<Storyboard>(
     "storyboard",
     JSON.stringify({
       outline: outlineNode?.data.prompt,
       assetNames,
+      sceneNames,
       count: s.shotCount,
     }),
     s.shotCount,
@@ -299,7 +303,7 @@ async function runStoryboardAndShots(stylePrompt: string) {
     description: sh.description,
     dialogue: sh.dialogue ?? [],
     characters: sh.characters ?? [],
-    scene: "",
+    scene: sh.scene ?? "",
     nodeId: null,
     status: "pending",
   }));
@@ -312,11 +316,15 @@ async function runStoryboardAndShots(stylePrompt: string) {
       charNodes.set(a.name, a.nodeId);
     }
   }
-  // 取第一个已成功生成的场景图作为通用场景参考
-  const sceneNode =
-    s.assets.find(
-      (a) => a.kind === "scene" && a.nodeId && a.status === "done",
-    )?.nodeId ?? null;
+  // 场景名 → 节点 id 映射,分镜按本镜剧情地点选用;第一个成功场景兜底(模型漏填 scene 时)
+  const sceneNodes = new Map<string, string>();
+  let fallbackSceneNode: string | null = null;
+  for (const a of s.assets) {
+    if (a.kind === "scene" && a.nodeId && a.status === "done") {
+      sceneNodes.set(a.name, a.nodeId);
+      fallbackSceneNode ??= a.nodeId;
+    }
+  }
 
   // 上一镜尾帧衔接:{ nodeId, url } | null;截帧失败或上一镜跳过时为 null
   let prevTail: { nodeId: string; url: string } | null = null;
@@ -332,6 +340,8 @@ async function runStoryboardAndShots(stylePrompt: string) {
       const src = charNodes.get(cname);
       if (src) refs.push({ id: src, name: cname });
     }
+    // 本镜场景按分镜标注的剧情地点匹配;分镜未标注或该场景资产生成失败时用第一个成功场景兜底
+    const sceneNode = (shot.scene ? sceneNodes.get(shot.scene) : null) ?? fallbackSceneNode;
     if (sceneNode) refs.push({ id: sceneNode, name: "场景" });
     if (prevTail) refs.push({ id: prevTail.nodeId, name: "上一镜尾帧" });
     while (refs.length > 5) {
