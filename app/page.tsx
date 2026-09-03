@@ -79,7 +79,9 @@ function CanvasPage() {
           if (!node) continue;
           const isDone = t.status === "completed" && t.media_id;
           const isFailed = t.status === "failed";
-          if (node.data.status === "generating" || node.data.status === "queued") {
+          // 生成中/排队 → 按最新任务落定;节点已 done 但最新任务产出新视频(如修复前被旧任务回写卡住)→ 直接换新
+          const isNewMedia = isDone && !!t.media_id && node.data.mediaId !== t.media_id;
+          if (node.data.status === "generating" || node.data.status === "queued" || isNewMedia) {
             if (isDone || isFailed) {
               store.updateNodeData(t.node_id, isDone ? { status: "done", mediaId: t.media_id, error: undefined } : { status: "failed", error: t.error ?? "生成失败" });
               changed = true;

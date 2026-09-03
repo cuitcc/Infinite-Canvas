@@ -392,10 +392,11 @@ async function runStoryboardAndShots(stylePrompt: string) {
         return `${p}为${r.name}的长相、发型与服装参考,只取外形,其站姿与朝向不作参考`;
       })
       .join(";");
-    // 声音设计(官方六要素之一):有台词靠注入锁定人声;无台词明确环境音方向,防模型乱配音乐或幻听人声
+    // 声音设计(官方六要素之一):有台词靠注入锁定人声;无台词用正面声音描述压住旁白幻觉
+    // (否定式"不出现人声"实测无效,生视频模型默认爱加解说,必须具体描述画面内声音把它填满)
     const soundNote = boundDialogue.length
       ? "音轨仅包含上述角色台词人声与现场动作音效"
-      : "无对白,音轨仅保留现场环境音与动作音效,不加背景音乐,不出现人声";
+      : "音轨只有画面内的现场声:脚步声、衣物摩擦声、器物声响与自然环境音,没有解说旁白,没有任何说话声";
     const nodeId = addAgentNode("video", { x: 800, y: i * 320 }, {
       label: `第${shot.index}镜`,
       prompt: `${stylePrompt},${shot.description},${identityNote},${soundNote}`,
