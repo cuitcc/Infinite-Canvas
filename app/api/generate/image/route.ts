@@ -44,10 +44,10 @@ export async function POST(req: NextRequest) {
     const resolved = model ? resolveModel(model) : undefined;
     let url: string;
     let mediaId: string;
-    let usedModel = model ?? "agnes-image-2.1-flash";
+    let usedModel = model ?? "agnes-image-2.5-flash";
 
     if (!resolved || resolved.provider.name === "Agnes") {
-      usedModel = resolved?.model.modelId ?? "agnes-image-2.1-flash";
+      usedModel = resolved?.model.modelId ?? "agnes-image-2.5-flash";
       const input = {
         mode: referenceUrls.length > 0 ? ("image" as const) : ("text" as const),
         prompt: prompt.trim(),

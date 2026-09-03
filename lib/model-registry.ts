@@ -127,7 +127,7 @@ export function deleteProvider(id: string) {
 
 const DEFAULT_AGNES_MODELS: Array<Omit<ProviderModel, "providerId" | "id">> = [
   { modelId: "agnes-video-2.5-flash", label: "Agnes Video 2.5 Flash", kind: "video", capabilities: ["first-frame", "reference"] },
-  { modelId: "agnes-image-2.1-flash", label: "Agnes Image 2.1 Flash", kind: "image", capabilities: ["reference"] },
+  { modelId: "agnes-image-2.5-flash", label: "Agnes Image 2.5 Flash", kind: "image", capabilities: ["reference"] },
   { modelId: "agnes-2.5-flash", label: "Agnes Chat 2.5 Flash (快)", kind: "text" },
   { modelId: "agnes-2.5-pro", label: "Agnes Chat 2.5 Pro (强)", kind: "text" },
 ];

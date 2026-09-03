@@ -80,7 +80,7 @@ export interface CreateImageInput {
 }
 
 export interface AgnesCreateImageBody {
-  model: "agnes-image-2.1-flash";
+  model: "agnes-image-2.5-flash";
   prompt: string;
   size?: string;
   ratio?: string;

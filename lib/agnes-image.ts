@@ -8,7 +8,7 @@ const DEFAULT_NEGATIVE_PROMPT = "lowres, bad anatomy, bad hands, text, error, mi
 
 export function buildAgnesImageRequest(input: CreateImageInput): AgnesCreateImageBody {
   const body: AgnesCreateImageBody = {
-    model: "agnes-image-2.1-flash",
+    model: "agnes-image-2.5-flash",
     prompt: enhancePrompt(input.prompt),
     // 档位(1K/2K/3K/4K)优先;兼容旧的精确尺寸写法
     size: input.size || "4K",
