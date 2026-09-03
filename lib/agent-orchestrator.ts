@@ -367,8 +367,6 @@ async function runStoryboardAndShots(stylePrompt: string) {
       aspectRatio: s.aspectRatio,
       referenceOrder: refIds,
       refNames,
-      // 抑制"全员怼脸正面站桩":与分镜运镜要求配合,给模型反向约束
-      negativePrompt: "固定机位,画面静止,所有人物正面朝向镜头,呆板站立,字幕,水印,文字",
     });
     for (const src of refIds) connect(src, nodeId);
 

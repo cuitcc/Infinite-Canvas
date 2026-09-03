@@ -40,6 +40,7 @@ export function buildAgnesVideoRequest(input: CreateVideoInput, model = DEFAULT_
       body.seed = input.seed;
     }
 
+    // 仅 v2.0 接受 negative_prompt;2.5-flash 传该字段会 400(invalid_request)
     if (input.negative_prompt) {
       body.negative_prompt = input.negative_prompt;
     }
@@ -60,6 +61,7 @@ export function buildAgnesVideoRequest(input: CreateVideoInput, model = DEFAULT_
   }
 
   // 新版 2.5-flash: mode + seconds + size(720P) + aspect_ratio
+  // 注意:2.5-flash 不接受 negative_prompt 字段(400 invalid_request),一律不下发
   const agnesMode = mapGenerationModeToAgnesMode(input);
   const body: AgnesCreateVideoBody = {
     model: "agnes-video-2.5-flash",
@@ -72,10 +74,6 @@ export function buildAgnesVideoRequest(input: CreateVideoInput, model = DEFAULT_
 
   if (input.seed !== undefined) {
     body.seed = input.seed;
-  }
-
-  if (input.negative_prompt) {
-    body.negative_prompt = input.negative_prompt;
   }
 
   if (agnesMode === "keyframe") {
