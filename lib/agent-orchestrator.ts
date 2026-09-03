@@ -347,16 +347,28 @@ async function runStoryboardAndShots(stylePrompt: string) {
     const refIds = refs.map((r) => r.id);
     const refNames: Record<string, string> = Object.fromEntries(refs.map((r) => [r.id, r.name]));
 
+    // 台词只保留说话人能绑定到参考图的行:否则 buildDialogueInjection 精确绑定整体失效,
+    // 回退成整块引号注入,模型会让第一个角色念完全部台词
+    const speakerSet = new Set(refs.map((r) => r.name));
+    const boundDialogue = shot.dialogue.filter((l) => {
+      const m = /^([^：:]+)[：:]/.exec(l.trim());
+      return !!m && speakerSet.has(m[1].trim());
+    });
+
+    // 参考图仅锁定长相/服装:立绘是正面站姿,不声明会被模型连姿势一起复制,导致全员面向镜头站桩
+    const poseNote = "参考图仅用于锁定人物长相、发型与服装,人物的动作、身体朝向和镜头机位以提示词描述为准,不要复制参考图中的站姿";
     const nodeId = addAgentNode("video", { x: 800, y: i * 320 }, {
       label: `第${shot.index}镜`,
       prompt: prevTail
-        ? `${stylePrompt},${shot.description},最后一张参考图是上一镜结尾画面,本镜开头镜头的构图、人物位置与场景状态必须与它自然衔接延续`
-        : `${stylePrompt},${shot.description}`,
-      dialogue: shot.dialogue.length ? shot.dialogue.join("\n") : undefined,
+        ? `${stylePrompt},${shot.description},${poseNote},最后一张参考图是上一镜结尾画面:人物位置、场景与画面状态从它自然延续,但禁止沿用上一镜的构图和景别,本镜必须换新机位重新起幅并完成明确的运镜`
+        : `${stylePrompt},${shot.description},${poseNote}`,
+      dialogue: boundDialogue.length ? boundDialogue.join("\n") : undefined,
       seconds: "10",
       aspectRatio: s.aspectRatio,
       referenceOrder: refIds,
       refNames,
+      // 抑制"全员怼脸正面站桩":与分镜运镜要求配合,给模型反向约束
+      negativePrompt: "固定机位,画面静止,所有人物正面朝向镜头,呆板站立,字幕,水印,文字",
     });
     for (const src of refIds) connect(src, nodeId);
 
