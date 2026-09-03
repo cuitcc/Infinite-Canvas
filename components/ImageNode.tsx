@@ -41,10 +41,10 @@ export function ImageNodeView({ id, data, selected }: NodeProps<Node<CanvasNodeD
           </button>
         </div>
         {data.error && <p className="text-[10px] text-rose-500">{data.error}</p>}
-        {data.mediaId ? (
+        {data.mediaId || data.remoteUrl ? (
           <div className="relative overflow-hidden rounded-md border border-slate-200 bg-slate-100">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={`/api/media/${data.mediaId}`} alt={data.label ?? "生成的图片"} className="nodrag w-full object-contain" draggable={false} />
+            <img src={data.mediaId ? `/api/media/${data.mediaId}` : data.remoteUrl} alt={data.label ?? "生成的图片"} className="nodrag w-full object-contain" draggable={false} />
           </div>
         ) : (
           <div className={`flex h-36 items-center justify-center rounded-md border border-dashed ${status === "failed" ? "border-rose-300 bg-rose-50" : "border-slate-300 bg-slate-50"} text-xs text-slate-400`}>
@@ -69,9 +69,9 @@ export function ImageNodeView({ id, data, selected }: NodeProps<Node<CanvasNodeD
           >
             {busy ? "生成中…" : data.mediaId ? "重新生成" : "生成图片"}
           </button>
-          {data.mediaId && (
+          {(data.mediaId || data.remoteUrl) && (
             <a
-              href={`/api/media/${data.mediaId}`}
+              href={data.mediaId ? `/api/media/${data.mediaId}` : data.remoteUrl}
               download
               className="nodrag rounded bg-sky-100 px-2 py-1 text-[10px] text-sky-700 hover:bg-sky-200"
             >

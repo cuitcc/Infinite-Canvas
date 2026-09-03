@@ -333,65 +333,77 @@ async function runStoryboardAndShots(stylePrompt: string) {
     if (aborted) return;
     const shot = shots[i];
 
-    // 参考图顺序:出场角色立绘(按 characters 顺序,与分镜描述"参考图N"编号对齐)→ 出镜道具 → 场景图 → 上一镜尾帧(最后一张,衔接基准);
-    // refNames 供台词按角色名精确绑定,非角色条目标注为画面参考。Agnes reference 模式上限 5 张,
-    // 超限依次剔除:场景图 → 道具 → 编号最大的角色(保住前面角色的"参考图N"锚点),尾帧必留。
+    // 参考图策略按衔接方式分两路:
+    // 1) 有上一镜尾帧 → Agnes reference 模式禁止 first_frame,二者不可兼得,改走 keyframe 首帧模式:
+    //    尾帧即本镜首帧,画面硬衔接;人物身份由首帧画面本身锁定,描述中 <Picture N> 锚点替换回角色名。
+    // 2) 无尾帧(首镜/上一镜失败/截帧降级) → reference 模式:角色立绘(按 characters 顺序,与描述
+    //    "<Picture N>"编号对齐)→ 出镜道具 → 场景图;上限 5 张,超限依次剔除场景 → 道具 → 编号最大的角色。
     const refs: { id: string; name: string }[] = [];
-    for (const cname of shot.characters) {
-      const src = charNodes.get(cname);
-      if (src) refs.push({ id: src, name: cname });
-    }
-    // 道具:名称出现在本镜画面描述中才作为参考图,帮助道具形制一致
-    for (const a of s.assets) {
-      if (a.kind === "prop" && a.nodeId && a.status === "done" && shot.description.includes(a.name)) {
-        refs.push({ id: a.nodeId, name: `道具·${a.name}` });
+    const useTailFirstFrame = !!prevTail;
+    let description = shot.description;
+    if (useTailFirstFrame && prevTail) {
+      refs.push({ id: prevTail.nodeId, name: "上一镜尾帧" });
+      for (let ci = 0; ci < shot.characters.length; ci++) {
+        description = description.replaceAll(`<Picture ${ci + 1}>`, shot.characters[ci]);
       }
-    }
-    // 本镜场景按分镜标注的剧情地点匹配;分镜未标注或该场景资产生成失败时用第一个成功场景兜底
-    const sceneNode = (shot.scene ? sceneNodes.get(shot.scene) : null) ?? fallbackSceneNode;
-    if (sceneNode) refs.push({ id: sceneNode, name: "场景" });
-    if (prevTail) refs.push({ id: prevTail.nodeId, name: "上一镜尾帧" });
-    while (refs.length > 5) {
-      const names = refs.map((r) => r.name);
-      const sceneIdx = names.lastIndexOf("场景");
-      if (sceneIdx !== -1) {
-        refs.splice(sceneIdx, 1);
-        continue;
+    } else {
+      for (const cname of shot.characters) {
+        const src = charNodes.get(cname);
+        if (src) refs.push({ id: src, name: cname });
       }
-      // 从后往前找第一个可剔除项(道具优先于角色,尾帧必留);剔除编号靠后的角色可保住前段"参考图N"锚点
-      let dropIdx = -1;
-      for (let j = refs.length - 2; j >= 0; j--) {
-        if (names[j].startsWith("道具·")) { dropIdx = j; break; }
-      }
-      if (dropIdx === -1) {
-        for (let j = refs.length - 2; j >= 0; j--) {
-          if (!names[j].startsWith("道具·")) { dropIdx = j; break; }
+      // 道具:名称出现在本镜画面描述中才作为参考图,帮助道具形制一致
+      for (const a of s.assets) {
+        if (a.kind === "prop" && a.nodeId && a.status === "done" && shot.description.includes(a.name)) {
+          refs.push({ id: a.nodeId, name: `道具·${a.name}` });
         }
       }
-      if (dropIdx === -1) dropIdx = 0;
-      refs.splice(dropIdx, 1);
+      // 本镜场景按分镜标注的剧情地点匹配;分镜未标注或该场景资产生成失败时用第一个成功场景兜底
+      const sceneNode = (shot.scene ? sceneNodes.get(shot.scene) : null) ?? fallbackSceneNode;
+      if (sceneNode) refs.push({ id: sceneNode, name: "场景" });
+      while (refs.length > 5) {
+        const names = refs.map((r) => r.name);
+        const sceneIdx = names.lastIndexOf("场景");
+        if (sceneIdx !== -1) {
+          refs.splice(sceneIdx, 1);
+          continue;
+        }
+        // 从后往前找第一个可剔除项(道具优先于角色);剔除编号靠后的角色可保住前段"<Picture N>"锚点
+        let dropIdx = -1;
+        for (let j = refs.length - 2; j >= 0; j--) {
+          if (names[j].startsWith("道具·")) { dropIdx = j; break; }
+        }
+        if (dropIdx === -1) {
+          for (let j = refs.length - 2; j >= 0; j--) {
+            if (!names[j].startsWith("道具·")) { dropIdx = j; break; }
+          }
+        }
+        if (dropIdx === -1) dropIdx = 0;
+        refs.splice(dropIdx, 1);
+      }
     }
     const refIds = refs.map((r) => r.id);
     const refNames: Record<string, string> = Object.fromEntries(refs.map((r) => [r.id, r.name]));
 
-    // 台词只保留说话人能绑定到参考图的行:否则 buildDialogueInjection 精确绑定整体失效,
-    // 回退成整块引号注入,模型会让第一个角色念完全部台词
+    // 台词过滤:参考图模式只留说话人能绑定到参考图的行(否则精确绑定整体失效,回退整块引号注入);
+    // 尾帧首帧模式说话人不依赖参考图,按角色名绑定(dialogue.ts 名字兜底),保留全部可解析行
     const speakerSet = new Set(refs.map((r) => r.name));
     const boundDialogue = shot.dialogue.filter((l) => {
       const m = /^([^：:]+)[：:]/.exec(l.trim());
-      return !!m && speakerSet.has(m[1].trim());
+      return !!m && (useTailFirstFrame || speakerSet.has(m[1].trim()));
     });
 
     // 官方 <Picture N> 占位符逐张声明参考图用途:只锁外形,动作朝向机位以提示词为准(立绘正面站姿会被连姿势复制)
-    const identityNote = refs
-      .map((r, i) => {
-        const p = `<Picture ${i + 1}>`;
-        if (r.name === "场景") return `${p}为场景与氛围参考`;
-        if (r.name === "上一镜尾帧") return `${p}是上一镜结尾画面:人物位置与场景状态从它自然延续,但本镜必须换新机位重新起幅,禁止沿用上一镜构图景别`;
-        if (r.name.startsWith("道具·")) return `${p}为道具${r.name.slice(3)}的形制参考`;
-        return `${p}为${r.name}的长相、发型与服装参考,只取外形,其站姿与朝向不作参考`;
-      })
-      .join(";");
+    const identityNote = useTailFirstFrame
+      ? "<Picture 1>是上一镜结尾画面,本镜视频必须以它为首帧开始:人物位置、朝向、服装与场景状态与它完全衔接,在此基础上完成本镜描述的新动作与新机位运镜"
+      : refs
+        .map((r, i) => {
+          const p = `<Picture ${i + 1}>`;
+          if (r.name === "场景") return `${p}为场景与氛围参考`;
+          if (r.name === "上一镜尾帧") return `${p}是上一镜结尾画面:人物位置与场景状态从它自然延续,但本镜必须换新机位重新起幅,禁止沿用上一镜构图景别`;
+          if (r.name.startsWith("道具·")) return `${p}为道具${r.name.slice(3)}的形制参考`;
+          return `${p}为${r.name}的长相、发型与服装参考,只取外形,其站姿与朝向不作参考`;
+        })
+        .join(";");
     // 声音设计(官方六要素之一):有台词靠注入锁定人声;无台词用正面声音描述压住旁白幻觉
     // (否定式"不出现人声"实测无效,生视频模型默认爱加解说,必须具体描述画面内声音把它填满)
     const soundNote = boundDialogue.length
@@ -399,7 +411,7 @@ async function runStoryboardAndShots(stylePrompt: string) {
       : "音轨只有画面内的现场声:脚步声、衣物摩擦声、器物声响与自然环境音,没有解说旁白,没有任何说话声";
     const nodeId = addAgentNode("video", { x: 800, y: i * 320 }, {
       label: `第${shot.index}镜`,
-      prompt: `${stylePrompt},${shot.description},${identityNote},${soundNote}`,
+      prompt: `${stylePrompt},${description},${identityNote},${soundNote}`,
       dialogue: boundDialogue.length ? boundDialogue.join("\n") : undefined,
       seconds: "10",
       aspectRatio: s.aspectRatio,

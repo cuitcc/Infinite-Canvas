@@ -57,6 +57,21 @@ export function buildDialogueInjection(dialogue: string, referenceCount: number,
     return `${header}\n${parts.join("\n")}`;
   }
 
+  // 名字绑定兜底:每行都能解析出"角色名：台词"时按名字分配,不依赖参考图编号。
+  // 覆盖尾帧首帧模式(唯一参考图是尾帧,说话人不是图)等场景,优于整块引号注入(会一人念完全部)
+  const named = lines.map((line) => {
+    const m = /^([^：:]+)[：:]\s*(.+)$/.exec(line);
+    return m ? { speaker: m[1].trim(), text: m[2].trim() } : null;
+  });
+  if (named.length > 0 && named.every((n) => n && n.speaker && n.text)) {
+    const header = "台词按角色分配,谁说台词谁开口,口型与台词精确同步:";
+    const parts = named.map((n) => `${n!.speaker}说："${n!.text}"`);
+    const solo = named.length >= 2
+      ? "\n以上台词由各自角色分别开口,一人只说自己名下的一句,禁止任何角色替他人念台词,禁止重复台词。"
+      : "";
+    return `${header}\n${parts.join("\n")}${solo}`;
+  }
+
   return null;
 }
 
