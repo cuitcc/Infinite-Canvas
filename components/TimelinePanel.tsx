@@ -54,6 +54,8 @@ export function TimelinePanel({ onExport }: { onExport?: () => void }) {
   const clips = timeline;
 
   const addToTimeline = (nodeId: string, mediaId: string) => {
+    // 同一视频节点只允许出现一条:agent 装配后按钮仍可见,重复点击会产生重复片段
+    if (clips.some((c) => c.nodeId === nodeId)) return;
     const next: TimelineClipState[] = [...clips, { id: `clip-${nodeId}-${clips.length}`, nodeId, mediaId, order: clips.length, trimIn: 0, trimOut: null }];
     setTimeline(next);
   };
@@ -100,15 +102,19 @@ export function TimelinePanel({ onExport }: { onExport?: () => void }) {
         <div className="max-h-56 overflow-y-auto px-4 pb-3">
           <div className="mb-2 flex flex-wrap gap-1.5">
             {doneVideos.length === 0 && <span className="text-[10px] text-slate-400">还没有完成的视频节点,先生成视频再加入时间线</span>}
-            {doneVideos.map((n) => (
-              <button
-                key={n.id}
-                onClick={() => addToTimeline(n.id, n.data.mediaId!)}
-                className="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] text-rose-600 hover:bg-rose-100"
-              >
-                + {n.data.label ?? "视频片段"}
-              </button>
-            ))}
+            {doneVideos.map((n) => {
+              const added = clips.some((c) => c.nodeId === n.id);
+              return (
+                <button
+                  key={n.id}
+                  onClick={() => addToTimeline(n.id, n.data.mediaId!)}
+                  disabled={added}
+                  className={`rounded border px-2 py-1 text-[10px] ${added ? "cursor-default border-slate-200 bg-slate-50 text-slate-400" : "border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100"}`}
+                >
+                  {added ? `✓ ${n.data.label ?? "视频片段"}` : `+ ${n.data.label ?? "视频片段"}`}
+                </button>
+              );
+            })}
           </div>
 
           {doneAudios.length > 0 && (

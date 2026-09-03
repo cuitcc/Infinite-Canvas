@@ -32,7 +32,7 @@ export function buildDialogueInjection(dialogue: string, referenceCount: number,
         .map((name, i) => ({ name, i }))
         .filter(({ name }) => !parsed.some((p) => p.speaker === name))
         .map(({ name, i }) =>
-          `第${i + 1}张参考图中的${name}不说台词${name.includes("场景") || name.includes("尾帧") ? ",仅作画面衔接参考" : ",保持倾听和自然反应"}`);
+          `第${i + 1}张参考图中的${name}不说台词${/场景|尾帧|^道具·/.test(name) ? ",仅作画面参考" : ",保持倾听和自然反应"}`);
       // 多人台词时显式禁止"一人念完全部":模型容易把多句台词都交给主角色
       const solo = parsed.length >= 2
         ? "\n以上台词由各自角色分别开口,一人只说自己名下的一句,禁止任何角色替他人念台词,禁止重复台词。"

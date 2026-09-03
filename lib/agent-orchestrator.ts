@@ -333,26 +333,43 @@ async function runStoryboardAndShots(stylePrompt: string) {
     if (aborted) return;
     const shot = shots[i];
 
-    // 参考图顺序:出场角色立绘(按 characters 顺序,与分镜描述"参考图N"编号对齐)→ 场景图 → 上一镜尾帧(最后一张,衔接基准);
-    // refNames 供台词按角色名精确绑定,尾帧/场景图标注为非说话人。Agnes reference 模式上限 5 张,超限先去场景图再去多余角色,尾帧必留。
+    // 参考图顺序:出场角色立绘(按 characters 顺序,与分镜描述"参考图N"编号对齐)→ 出镜道具 → 场景图 → 上一镜尾帧(最后一张,衔接基准);
+    // refNames 供台词按角色名精确绑定,非角色条目标注为画面参考。Agnes reference 模式上限 5 张,
+    // 超限依次剔除:场景图 → 道具 → 编号最大的角色(保住前面角色的"参考图N"锚点),尾帧必留。
     const refs: { id: string; name: string }[] = [];
     for (const cname of shot.characters) {
       const src = charNodes.get(cname);
       if (src) refs.push({ id: src, name: cname });
+    }
+    // 道具:名称出现在本镜画面描述中才作为参考图,帮助道具形制一致
+    for (const a of s.assets) {
+      if (a.kind === "prop" && a.nodeId && a.status === "done" && shot.description.includes(a.name)) {
+        refs.push({ id: a.nodeId, name: `道具·${a.name}` });
+      }
     }
     // 本镜场景按分镜标注的剧情地点匹配;分镜未标注或该场景资产生成失败时用第一个成功场景兜底
     const sceneNode = (shot.scene ? sceneNodes.get(shot.scene) : null) ?? fallbackSceneNode;
     if (sceneNode) refs.push({ id: sceneNode, name: "场景" });
     if (prevTail) refs.push({ id: prevTail.nodeId, name: "上一镜尾帧" });
     while (refs.length > 5) {
-      const sceneIdx = refs.map((r) => r.name).lastIndexOf("场景");
+      const names = refs.map((r) => r.name);
+      const sceneIdx = names.lastIndexOf("场景");
       if (sceneIdx !== -1) {
         refs.splice(sceneIdx, 1);
         continue;
       }
-      // 场景图已移除仍超限:从前往后去角色立绘,尾帧必留
-      const charIdx = refs.findIndex((r) => r.name !== "上一镜尾帧");
-      refs.splice(charIdx === -1 ? 0 : charIdx, 1);
+      // 从后往前找第一个可剔除项(道具优先于角色,尾帧必留);剔除编号靠后的角色可保住前段"参考图N"锚点
+      let dropIdx = -1;
+      for (let j = refs.length - 2; j >= 0; j--) {
+        if (names[j].startsWith("道具·")) { dropIdx = j; break; }
+      }
+      if (dropIdx === -1) {
+        for (let j = refs.length - 2; j >= 0; j--) {
+          if (!names[j].startsWith("道具·")) { dropIdx = j; break; }
+        }
+      }
+      if (dropIdx === -1) dropIdx = 0;
+      refs.splice(dropIdx, 1);
     }
     const refIds = refs.map((r) => r.id);
     const refNames: Record<string, string> = Object.fromEntries(refs.map((r) => [r.id, r.name]));
