@@ -104,18 +104,22 @@ export function NodeConfigPanel({ node, onClose }: { node: Node<CanvasNodeData>;
           <div className="grid grid-cols-2 gap-3 text-xs text-slate-600 md:grid-cols-3">
             <label className="flex flex-col gap-1">
               模型
-              <select value={data.model ?? "agnes-video-2.5"} onChange={(e) => updateNodeData(id, { model: e.target.value })} className="rounded border border-slate-200 bg-white px-2 py-1.5">
+              <select value={data.model ?? "agnes-video-2.5-flash"} onChange={(e) => {
+                const next = e.target.value;
+                // 切回 flash 时清晰度重置:flash 仅支持 720P,残留 960P/2K 会被 SDK 静默改写
+                updateNodeData(id, next === "agnes-video-2.5-flash" ? { model: next, videoSize: "720P" } : { model: next });
+              }} className="rounded border border-slate-200 bg-white px-2 py-1.5">
                 {videoModels.map((m) => <option key={m.modelId} value={m.modelId}>{m.label}</option>)}
               </select>
             </label>
             <label className="flex flex-col gap-1">
               清晰度
               <select
-                value={(data.videoSize as string | undefined) ?? "960P"}
+                value={(data.videoSize as string | undefined) ?? "720P"}
                 onChange={(e) => updateNodeData(id, { videoSize: e.target.value })}
                 className="rounded border border-slate-200 bg-white px-2 py-1.5"
               >
-                {["720P", "960P", "2K"].map((s) => <option key={s} value={s}>{s}{s !== "720P" ? " (仅 2.5 高清版)" : ""}</option>)}
+                {(data.model && data.model !== "agnes-video-2.5-flash" ? ["720P", "960P", "2K"] : ["720P"]).map((s) => <option key={s} value={s}>{s}{s !== "720P" ? " (高清版)" : ""}</option>)}
               </select>
             </label>
             <label className="flex flex-col gap-1">

@@ -392,14 +392,17 @@ async function runStoryboardAndShots(stylePrompt: string) {
         return `${p}为${r.name}的长相、发型与服装参考,只取外形,其站姿与朝向不作参考`;
       })
       .join(";");
+    // 声音设计(官方六要素之一):有台词靠注入锁定人声;无台词明确环境音方向,防模型乱配音乐或幻听人声
+    const soundNote = boundDialogue.length
+      ? "音轨仅包含上述角色台词人声与现场动作音效"
+      : "无对白,音轨仅保留现场环境音与动作音效,不加背景音乐,不出现人声";
     const nodeId = addAgentNode("video", { x: 800, y: i * 320 }, {
       label: `第${shot.index}镜`,
-      prompt: `${stylePrompt},${shot.description},${identityNote}`,
+      prompt: `${stylePrompt},${shot.description},${identityNote},${soundNote}`,
       dialogue: boundDialogue.length ? boundDialogue.join("\n") : undefined,
       seconds: "10",
       aspectRatio: s.aspectRatio,
-      model: "agnes-video-2.5",
-      videoSize: "960P",
+      model: "agnes-video-2.5-flash",
       referenceOrder: refIds,
       refNames,
     });
