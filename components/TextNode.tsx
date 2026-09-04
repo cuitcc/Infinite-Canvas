@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { NodeProps, type Node } from "@xyflow/react";
 import { NodeShell } from "./NodeShell";
 import { useCanvasStore, type CanvasNodeData } from "@/lib/store";
+import { TextEditorModal } from "./TextEditorModal";
 
 function useTextModels() {
   const [models, setModels] = useState<Array<{ modelId: string; label: string }>>([]);
@@ -30,15 +31,18 @@ export function TextNodeView({ id, data, selected }: NodeProps<Node<CanvasNodeDa
   const formatText = useCanvasStore((s) => s.formatText);
   const textModels = useTextModels();
   const busy = data.textBusy === true;
+  const [editorOpen, setEditorOpen] = useState(false);
 
   return (
     <NodeShell kind="text" nodeId={id} title="文本" selected={selected} status={busy ? "处理中…" : undefined}>
       <textarea
         value={data.prompt ?? ""}
-        onChange={(e) => updateNodeData(id, { prompt: e.target.value })}
-        placeholder="输入想法或描述…"
+        readOnly
+        onClick={() => setEditorOpen(true)}
+        title="点击放大编辑"
+        placeholder="点击编辑想法或描述…"
         rows={4}
-        className="nodrag w-full resize-none rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700 outline-none focus:border-violet-400"
+        className="nodrag w-full cursor-pointer resize-none rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700 outline-none hover:border-violet-300"
       />
       {data.textError && <p className="mt-1 text-[10px] text-rose-500">{data.textError}</p>}
       <div className="mt-2 flex flex-wrap gap-1.5">
@@ -75,6 +79,14 @@ export function TextNodeView({ id, data, selected }: NodeProps<Node<CanvasNodeDa
           {busy ? "…" : "译英"}
         </button>
       </div>
+      {editorOpen && (
+        <TextEditorModal
+          title="文本内容"
+          value={data.prompt ?? ""}
+          onChange={(v) => updateNodeData(id, { prompt: v })}
+          onClose={() => setEditorOpen(false)}
+        />
+      )}
     </NodeShell>
   );
 }

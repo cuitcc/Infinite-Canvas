@@ -5,11 +5,13 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { NodeShell } from "./NodeShell";
 import { useCanvasStore } from "@/lib/store";
 import { EDGE_TTS_VOICES, DEFAULT_EDGE_VOICE } from "@/lib/edge-tts-voices";
+import { TextEditorModal } from "./TextEditorModal";
 
 export function AudioNodeView({ id, data, selected }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const [customVoice, setCustomVoice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
 
   const voice = (data.voice as string) || DEFAULT_EDGE_VOICE;
   const isCustom = !EDGE_TTS_VOICES.some((v) => v.id === voice);
@@ -42,10 +44,12 @@ export function AudioNodeView({ id, data, selected }: NodeProps) {
       <div className="flex flex-col gap-2">
         <textarea
           value={text}
-          onChange={(e) => updateNodeData(id, { prompt: e.target.value })}
-          placeholder="输入要合成语音的文本"
+          readOnly
+          onClick={() => setEditorOpen(true)}
+          title="点击放大编辑"
+          placeholder="点击编辑要合成语音的文本"
           rows={3}
-          className="nodrag w-full resize-none rounded border border-slate-200 bg-slate-50 p-2 text-xs"
+          className="nodrag w-full cursor-pointer resize-none rounded border border-slate-200 bg-slate-50 p-2 text-xs hover:border-emerald-300"
         />
         <select
           value={isCustom ? "__custom__" : voice}
@@ -87,6 +91,14 @@ export function AudioNodeView({ id, data, selected }: NodeProps) {
           <audio src={`/api/media/${mediaId}`} controls className="w-full" />
         )}
       </div>
+      {editorOpen && (
+        <TextEditorModal
+          title="语音文本"
+          value={text}
+          onChange={(v) => updateNodeData(id, { prompt: v })}
+          onClose={() => setEditorOpen(false)}
+        />
+      )}
       <Handle type="source" position={Position.Right} className="!h-3 !w-3 !bg-emerald-500" />
     </NodeShell>
   );

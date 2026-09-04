@@ -6,6 +6,7 @@ import { NodeShell } from "./NodeShell";
 import { PromptOptimizeModal } from "./PromptOptimizeModal";
 import { useCanvasStore, type CanvasNodeData } from "@/lib/store";
 import { useDialogueExtract } from "./use-dialogue-extract";
+import { TextEditorModal } from "./TextEditorModal";
 
 const STATUS_LABEL: Record<string, string> = {
   idle: "待生成",
@@ -21,6 +22,8 @@ export function VideoNodeView({ id, data, selected }: NodeProps<Node<CanvasNodeD
   const status = data.status ?? "idle";
   const busy = status === "queued" || status === "generating";
   const [optimizeOpen, setOptimizeOpen] = useState(false);
+  const [promptEditorOpen, setPromptEditorOpen] = useState(false);
+  const [dialogueEditorOpen, setDialogueEditorOpen] = useState(false);
   const { extract, extracting, error: dialogueError, clearError } = useDialogueExtract(id);
 
   return (
@@ -28,10 +31,12 @@ export function VideoNodeView({ id, data, selected }: NodeProps<Node<CanvasNodeD
       <div className="space-y-2">
         <textarea
           value={data.prompt ?? ""}
-          onChange={(e) => updateNodeData(id, { prompt: e.target.value })}
-          placeholder={data.mediaId ? "画面描述(可改后重新生成)" : "直接输入画面描述,或从文本节点连线导入"}
+          readOnly
+          onClick={() => setPromptEditorOpen(true)}
+          title="点击放大编辑"
+          placeholder={data.mediaId ? "点击编辑画面描述" : "点击编辑画面描述,或从文本节点连线导入"}
           rows={2}
-          className="nodrag w-full resize-none rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700 outline-none focus:border-rose-400"
+          className="nodrag w-full cursor-pointer resize-none rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700 outline-none hover:border-rose-300"
         />
         <div className="flex justify-end">
           <button
@@ -44,10 +49,12 @@ export function VideoNodeView({ id, data, selected }: NodeProps<Node<CanvasNodeD
         </div>
         <div className="flex items-center gap-1.5">
           <input
-            value={data.dialogue ?? ""}
-            onChange={(e) => updateNodeData(id, { dialogue: e.target.value })}
-            placeholder="人物台词(可选)"
-            className="nodrag min-w-0 flex-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700 outline-none focus:border-rose-400"
+            value={(data.dialogue ?? "").replace(/\n/g, " / ")}
+            readOnly
+            onClick={() => setDialogueEditorOpen(true)}
+            title="点击放大编辑（每行一条：角色名：台词）"
+            placeholder="人物台词(点击编辑,每行一条)"
+            className="nodrag min-w-0 flex-1 cursor-pointer rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700 outline-none hover:border-rose-300"
           />
           <button
             onClick={() => { clearError(); extract(); }}
@@ -113,6 +120,22 @@ export function VideoNodeView({ id, data, selected }: NodeProps<Node<CanvasNodeD
           )}
         </div>
         <PromptOptimizeModal nodeId={id} kind="video" open={optimizeOpen} onClose={() => setOptimizeOpen(false)} />
+        {promptEditorOpen && (
+          <TextEditorModal
+            title="视频提示词"
+            value={data.prompt ?? ""}
+            onChange={(v) => updateNodeData(id, { prompt: v })}
+            onClose={() => setPromptEditorOpen(false)}
+          />
+        )}
+        {dialogueEditorOpen && (
+          <TextEditorModal
+            title="人物台词（每行一条：角色名：台词）"
+            value={data.dialogue ?? ""}
+            onChange={(v) => updateNodeData(id, { dialogue: v })}
+            onClose={() => setDialogueEditorOpen(false)}
+          />
+        )}
       </div>
     </NodeShell>
   );
