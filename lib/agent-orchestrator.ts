@@ -112,6 +112,50 @@ async function generateAndAwait(nodeId: string): Promise<boolean> {
 const patchErr = (nodeId: string, error?: string) =>
   useCanvasStore.getState().updateNodeData(nodeId, { error, status: "queued" });
 
+// ==================== 台词音频锚定(edge-tts) ====================
+// 预合成台词音频作为 audio reference 传给视频模型:模型从"自编台词"变为"跟读音频",
+// 从机制上消除乱说台词。音色按角色固定映射,跨镜一致。
+
+/** 角色音色池:第 i 个角色按序分配,男女交替降低同剧两个角色撞音色的概率 */
+const TTS_VOICE_POOL = [
+  "zh-CN-XiaoxiaoNeural", // 女·年轻
+  "zh-CN-YunjianNeural", // 男·磁性强
+  "zh-CN-XiaoyiNeural", // 女·少年感
+  "zh-CN-YunyangNeural", // 男·播音腔
+];
+
+function characterVoices(assets: { kind: string; name: string }[]): Map<string, string> {
+  const map = new Map<string, string>();
+  let i = 0;
+  for (const a of assets) {
+    if (a.kind === "character") {
+      map.set(a.name, TTS_VOICE_POOL[i % TTS_VOICE_POOL.length]);
+      i++;
+    }
+  }
+  return map;
+}
+
+/** 逐句合成台词音频,返回 mediaId 列表(顺序与台词行一致);任一句失败即抛错,调用方降级为直生台词 */
+async function synthesizeShotDialogue(projectId: string, dialogueLines: string[], voices: Map<string, string>): Promise<string[]> {
+  const ids: string[] = [];
+  for (const line of dialogueLines) {
+    const m = /^([^：:]+)[：:]\s*(.+)$/.exec(line.trim());
+    const speaker = m ? m[1].trim() : "";
+    const text = (m ? m[2] : line).trim();
+    const voice = voices.get(speaker) ?? TTS_VOICE_POOL[0];
+    const res = await fetch("/api/generate/audio", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, text, voice }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || "台词语音合成失败");
+    ids.push(json.mediaId as string);
+  }
+  return ids;
+}
+
 /** 截取视频最后一帧并上传,返回图片 URL;任何失败返回 null(降级为不使用尾帧衔接)。
  * 用 /api/media/{id} 同源播放避开 canvas 跨域污染,无需 ffmpeg。 */
 async function extractLastFrameUrl(mediaId: string): Promise<string | null> {
@@ -331,6 +375,9 @@ async function runStoryboardAndShots(stylePrompt: string) {
   // 上一镜尾帧衔接:{ nodeId, url } | null;截帧失败或上一镜跳过时为 null
   let prevTail: { nodeId: string; url: string } | null = null;
 
+  // 角色→音色映射,全剧固定,保证同一角色跨镜音色一致
+  const voices = characterVoices(s.assets);
+
   for (let i = 0; i < shots.length; i++) {
     if (aborted) return;
     const shot = shots[i];
@@ -423,6 +470,17 @@ async function runStoryboardAndShots(stylePrompt: string) {
     // 同 assets 循环:原地更新,避免下一轮 patch 抹掉 nodeId(否则 assembly 装不进时间线)
     shots[i] = { ...shots[i], nodeId, status: "running" };
     patch({ shots: [...shots] });
+
+    // 台词锚定:先按角色音色逐句合成台词音频,挂到节点上作为 audio reference;
+    // 失败则降级为原来的直生台词(不阻塞流程)
+    if (shot.dialogue.length > 0) {
+      try {
+        const audioIds = await synthesizeShotDialogue(useCanvasStore.getState().projectId!, shot.dialogue, voices);
+        useCanvasStore.getState().updateNodeData(nodeId, { audioMediaIds: audioIds });
+      } catch (e) {
+        console.warn("[agent] 台词 TTS 失败,本镜降级为直生台词", e);
+      }
+    }
 
     const ok = await generateAndAwait(nodeId);
     // 单镜失败跳过不阻塞，标记为 skipped

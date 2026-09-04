@@ -94,7 +94,7 @@ export function buildAgnesVideoRequest(input: CreateVideoInput, model = DEFAULT_
   }
 
   if (input.audios && input.audios.length > 0) {
-    body.audios = input.audios.slice(0, 1); // Agnes 目前一般传 1 条音频
+    body.audios = input.audios.slice(0, 3); // 台词锚定:每句台词一条音频(文档上限 3 条)
   }
 
   return body;

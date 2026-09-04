@@ -118,11 +118,15 @@ export async function POST(req: NextRequest) {
     let modelName = model ?? "agnes-video-2.5-flash";
 
     if (isAgnes) {
-      // Agnes Video 只有 reference 模式(>=2 张参考图)才接受 audios 字段
-      const mode = images.length >= 2 ? "keyframes" : image || images.length === 1 ? "image" : "text";
-      if (audioUrls.filter(Boolean).length > 0 && mode !== "keyframes") {
+      // Agnes Video 只有 reference 模式才接受 audios 字段;带音频参考(台词锚定)时强制走 reference,
+      // 单张参考图也按 reference 传(避免 400),无参考图时仍拒绝
+      const hasAudio = audioUrls.filter(Boolean).length > 0;
+      const mode = images.length >= 2 || (hasAudio && images.length >= 1)
+        ? "keyframes"
+        : image || images.length === 1 ? "image" : "text";
+      if (hasAudio && mode !== "keyframes") {
         return NextResponse.json(
-          { error: "Agnes Video 仅在使用 2 张及以上参考图的 reference 模式下支持音频参考，请添加参考图或移除音频连接" },
+          { error: "Agnes Video 仅在 reference 模式下支持音频参考，请添加参考图或移除音频连接" },
           { status: 400 }
         );
       }

@@ -253,6 +253,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       }
     }
 
+    // 短剧 Agent 台词锚定:编排器预合成的台词音频(edge-tts,按角色音色)作为 audio reference
+    const ownAudioIds = (data.audioMediaIds as string[] | undefined) ?? [];
+    for (const mid of ownAudioIds) audioUrls.push(`/api/media/${mid}`);
+
     // 按用户在配置面板拖拽设定的顺序对参考图排序
     const order = (data.referenceOrder as string[] | undefined) ?? [];
     imageRefs.sort((a, b) => {
@@ -298,6 +302,11 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       prompt = stripEmbeddedDialogue(prompt, dialogue);
       const injected = buildDialogueInjection(dialogue, imageUrls.length, speakerMap);
       prompt = `${prompt}\n${injected ?? `人物开口说出台词（人声清晰，口型与台词精确同步）："${dialogue}"`}`;
+    }
+
+    // 台词音频锚定时显式声明跟读,压制模型自编台词
+    if (data.kind === "video" && audioUrls.length > 0 && data.audioMediaIds) {
+      prompt = `${prompt}\n音轨严格以参考音频为准:人声跟着参考音频逐字念,不增加、不减少、不改动任何一句话,口型与音频同步`;
     }
 
     if (!prompt.trim()) {
