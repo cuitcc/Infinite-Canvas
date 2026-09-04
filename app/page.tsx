@@ -21,6 +21,7 @@ import { TimelinePanel } from "@/components/TimelinePanel";
 import { NodeConfigPanel } from "@/components/NodeConfigPanel";
 import { ModelManagerModal } from "@/components/ModelManagerModal";
 import { AgentPanel } from "@/components/AgentPanel";
+import { PipelineLibraryModal } from "@/components/PipelineLibraryModal";
 
 import { TextNodeView } from "@/components/TextNode";
 
@@ -61,6 +62,7 @@ function CanvasPage() {
   const [loaded, setLoaded] = useState(false);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [showModelManager, setShowModelManager] = useState(false);
+  const [showPipelineLibrary, setShowPipelineLibrary] = useState(false);
   const [showAgent, setShowAgent] = useState(false);
 
   const selectedNode = nodes.find((n) => n.selected) ?? null;
@@ -237,6 +239,9 @@ function CanvasPage() {
           <button onClick={handleClearCanvas} className="rounded-md border border-rose-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-rose-500 hover:bg-rose-50">
             清空画布
           </button>
+          <button onClick={() => setShowPipelineLibrary(true)} className="rounded-md border border-violet-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-violet-600 hover:bg-violet-50">
+            📚 流水线库
+          </button>
           <button onClick={() => setShowModelManager(true)} className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50">
             ⚙ 模型管理
           </button>
@@ -296,6 +301,10 @@ function CanvasPage() {
 
       {showModelManager && (
         <ModelManagerModal onClose={() => setShowModelManager(false)} />
+      )}
+
+      {showPipelineLibrary && (
+        <PipelineLibraryModal onClose={() => setShowPipelineLibrary(false)} />
       )}
 
       {showAgent && (

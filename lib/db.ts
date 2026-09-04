@@ -68,6 +68,15 @@ export function getDb(): import("better-sqlite3").Database {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS pipeline_snapshots (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      data TEXT NOT NULL,
+      node_count INTEGER NOT NULL DEFAULT 0,
+      video_count INTEGER NOT NULL DEFAULT 0,
+      cover_media_id TEXT,
+      created_at INTEGER NOT NULL
+    );
     CREATE INDEX IF NOT EXISTS idx_nodes_project ON nodes(project_id);
     CREATE INDEX IF NOT EXISTS idx_edges_project ON edges(project_id);
     CREATE INDEX IF NOT EXISTS idx_gen_tasks_status ON gen_tasks(status);
@@ -352,4 +361,53 @@ export function updateNodeData(nodeId: string, dataPatch: Record<string, unknown
   if (!row) return;
   const merged = { ...JSON.parse(row.data), ...dataPatch };
   db.prepare("UPDATE nodes SET data = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(merged), nowTs(), nodeId);
+}
+
+// ==================== 流水线快照（画布流水线库） ====================
+
+export interface PipelineSnapshotMeta {
+  id: string;
+  name: string;
+  node_count: number;
+  video_count: number;
+  cover_media_id: string | null;
+  created_at: number;
+}
+
+export interface PipelineSnapshotData {
+  nodes: Array<{ id: string; position: { x: number; y: number }; data: Record<string, unknown> }>;
+  edges: Array<{ id: string; source: string; target: string; data?: Record<string, unknown> | null }>;
+  clips: unknown[];
+}
+
+/** 保存一份流水线快照：节点/连线/时间线打包为 JSON,媒体文件不打包(载入后仍可引用已生成的媒体) */
+export function savePipelineSnapshot(name: string, data: PipelineSnapshotData): PipelineSnapshotMeta {
+  const db = getDb();
+  const id = newId();
+  const imageNode = data.nodes.find((n) => n.data?.kind === "image" && n.data?.mediaId) as { data: { mediaId: string } } | undefined;
+  const meta: PipelineSnapshotMeta = {
+    id,
+    name,
+    node_count: data.nodes.length,
+    video_count: data.nodes.filter((n) => n.data?.kind === "video").length,
+    cover_media_id: imageNode ? imageNode.data.mediaId : null,
+    created_at: nowTs(),
+  };
+  db.prepare("INSERT INTO pipeline_snapshots (id, name, data, node_count, video_count, cover_media_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run(id, name, JSON.stringify(data), meta.node_count, meta.video_count, meta.cover_media_id, meta.created_at);
+  return meta;
+}
+
+export function listPipelineSnapshots(): PipelineSnapshotMeta[] {
+  return getDb().prepare("SELECT id, name, node_count, video_count, cover_media_id, created_at FROM pipeline_snapshots ORDER BY created_at DESC").all() as PipelineSnapshotMeta[];
+}
+
+export function getPipelineSnapshot(id: string): (PipelineSnapshotMeta & { data: PipelineSnapshotData }) | undefined {
+  const row = getDb().prepare("SELECT id, name, data, node_count, video_count, cover_media_id, created_at FROM pipeline_snapshots WHERE id = ?").get(id) as { id: string; name: string; data: string; node_count: number; video_count: number; cover_media_id: string | null; created_at: number } | undefined;
+  if (!row) return undefined;
+  return { id: row.id, name: row.name, node_count: row.node_count, video_count: row.video_count, cover_media_id: row.cover_media_id, created_at: row.created_at, data: JSON.parse(row.data) as PipelineSnapshotData };
+}
+
+export function deletePipelineSnapshot(id: string) {
+  getDb().prepare("DELETE FROM pipeline_snapshots WHERE id = ?").run(id);
 }
