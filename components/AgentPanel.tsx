@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useCanvasStore, type AgentStage } from "@/lib/store";
 import { STYLE_LIBRARY, STYLE_CATEGORIES, type StyleEntry } from "@/lib/style-library";
 import { runAgent, chooseStyle, abortAgent } from "@/lib/agent-orchestrator";
+import { AGNES_VIDEO_SECONDS } from "@/lib/agnes-video";
 
 // 六个阶段的顺序与标签
 const STEPS: { key: AgentStage; label: string; num: string }[] = [
@@ -72,6 +73,7 @@ export function AgentPanel({ onClose }: Props) {
   const agentState = useCanvasStore((s) => s.agentState);
   const [theme, setTheme] = useState("");
   const [shotCount, setShotCount] = useState(8);
+  const [shotSeconds, setShotSeconds] = useState("10");
   const [aspectRatio, setAspectRatio] = useState("9:16");
   const [category, setCategory] = useState<"all" | "2d" | "3d" | "real">("all");
   const [customOpen, setCustomOpen] = useState(false);
@@ -87,7 +89,7 @@ export function AgentPanel({ onClose }: Props) {
 
   const handleStart = () => {
     if (!theme.trim()) return;
-    void runAgent(theme.trim(), shotCount, aspectRatio);
+    void runAgent(theme.trim(), shotCount, aspectRatio, shotSeconds);
   };
 
   const handleChooseStyle = (name: string, prompt: string) => {
@@ -111,6 +113,7 @@ export function AgentPanel({ onClose }: Props) {
       stage: "idle",
       theme: "",
       shotCount: 8,
+      shotSeconds: "10",
       aspectRatio: "9:16",
       styleName: "",
       stylePrompt: "",
@@ -158,7 +161,7 @@ export function AgentPanel({ onClose }: Props) {
                 className="w-full resize-none rounded border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-sky-400"
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-600">分镜数</label>
                 <select
@@ -166,8 +169,20 @@ export function AgentPanel({ onClose }: Props) {
                   onChange={(e) => setShotCount(Number(e.target.value))}
                   className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700"
                 >
-                  {[4, 6, 8, 12].map((n) => (
+                  {[4, 6, 8, 12, 16].map((n) => (
                     <option key={n} value={n}>{n} 镜</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">每镜秒数</label>
+                <select
+                  value={shotSeconds}
+                  onChange={(e) => setShotSeconds(e.target.value)}
+                  className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700"
+                >
+                  {AGNES_VIDEO_SECONDS.map((s) => (
+                    <option key={s} value={s}>{s} 秒</option>
                   ))}
                 </select>
               </div>

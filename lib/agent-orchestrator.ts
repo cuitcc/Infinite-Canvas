@@ -166,7 +166,7 @@ export function abortAgent() {
 }
 
 /** 大纲 → 风格选择（暂停，等待用户调用 chooseStyle） */
-export async function runAgent(theme: string, shotCount: number, aspectRatio: string) {
+export async function runAgent(theme: string, shotCount: number, aspectRatio: string, shotSeconds = "10") {
   const cur = useCanvasStore.getState().agentState;
   // 并发保护:流水线运行中拒绝重复启动(避免 aborted 标志与 agentState 被第二路流程破坏)
   if (cur && !["idle", "aborted", "done"].includes(cur.stage)) return;
@@ -183,6 +183,7 @@ export async function runAgent(theme: string, shotCount: number, aspectRatio: st
     stage: "outline",
     theme,
     shotCount,
+    shotSeconds,
     aspectRatio,
     styleName: "",
     stylePrompt: "",
@@ -294,6 +295,7 @@ async function runStoryboardAndShots(stylePrompt: string) {
       assetNames,
       sceneNames,
       count: s.shotCount,
+      secondsPerShot: s.shotSeconds,
     }),
     s.shotCount,
   );
@@ -408,7 +410,7 @@ async function runStoryboardAndShots(stylePrompt: string) {
       label: `第${shot.index}镜`,
       prompt: `${stylePrompt},${tailLead}${shot.description},${identityNote},${soundNote}`,
       dialogue: boundDialogue.length ? boundDialogue.join("\n") : undefined,
-      seconds: "10",
+      seconds: s.shotSeconds ?? "10",
       aspectRatio: s.aspectRatio,
       model: "agnes-video-2.5-flash",
       referenceOrder: refIds,

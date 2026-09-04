@@ -75,6 +75,8 @@ export interface AgentState {
   stage: AgentStage;
   theme: string;
   shotCount: number;
+  /** 每个分镜视频的目标时长(秒),对应 Agnes 支持的 4-12 秒档位 */
+  shotSeconds: string;
   aspectRatio: string;
   styleName: string;
   stylePrompt: string;
@@ -100,6 +102,7 @@ export const EMPTY_AGENT_STATE: AgentState = {
   stage: "idle",
   theme: "",
   shotCount: 8,
+  shotSeconds: "10",
   aspectRatio: "9:16",
   styleName: "",
   stylePrompt: "",
