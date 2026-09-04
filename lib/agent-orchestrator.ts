@@ -335,14 +335,16 @@ async function runStoryboardAndShots(stylePrompt: string) {
     if (aborted) return;
     const shot = shots[i];
 
-    // 参考图顺序:出场角色立绘(按 characters 顺序,与分镜描述"<Picture N>"编号对齐)→ 出镜道具 → 场景图 → 上一镜尾帧(最后一张);
+    // 参考图顺序:角色立绘按大纲角色全局顺序(与分镜描述"<Picture N>"编号规则一致,避免 description 与 identityNote 编号打架)
+    // → 出镜道具 → 场景图 → 上一镜尾帧(最后一张);
     // refNames 供台词按角色名精确绑定,非角色条目标注为画面参考。Agnes reference 模式上限 5 张,
     // 超限依次剔除:场景图 → 道具 → 编号最大的角色(保住前面角色的"<Picture N>"锚点),尾帧必留。
     // 注:reference 模式禁传 first_frame,尾帧靠提示词声明"作为首帧起播",为软约束(开头贴近,不保证逐帧一致)。
     const refs: { id: string; name: string }[] = [];
-    for (const cname of shot.characters) {
-      const src = charNodes.get(cname);
-      if (src) refs.push({ id: src, name: cname });
+    for (const a of s.assets) {
+      if (a.kind === "character" && a.nodeId && a.status === "done" && shot.characters.includes(a.name)) {
+        refs.push({ id: a.nodeId, name: a.name });
+      }
     }
     // 道具:名称出现在本镜画面描述中才作为参考图,帮助道具形制一致
     for (const a of s.assets) {
