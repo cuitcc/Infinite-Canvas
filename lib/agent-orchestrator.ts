@@ -35,11 +35,11 @@ function patch(patchObj: Partial<import("./store").AgentState>) {
 }
 
 /** 调用规划 API（outline / assets / storyboard） */
-async function plan<T>(task: string, input: string, shotCount?: number): Promise<T> {
+async function plan<T>(task: string, input: string, shotCount?: number, secondsPerShot?: string): Promise<T> {
   const res = await fetch("/api/agent/plan", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ task, input, shotCount }),
+    body: JSON.stringify({ task, input, shotCount, secondsPerShot }),
   });
   const json = await res.json();
   if (!res.ok) throw new Error(json.error || "规划失败");
@@ -196,7 +196,7 @@ export async function runAgent(theme: string, shotCount: number, aspectRatio: st
   });
 
   try {
-    const outline = await plan<Outline>("outline", theme);
+    const outline = await plan<Outline>("outline", theme, shotCount, shotSeconds);
     if (aborted) return;
 
     // 保存结构化大纲 JSON 到 agentState，后续 assets/storyboard 阶段直接复用，
