@@ -296,7 +296,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     if (dialogue && data.kind === "video") {
       // 同一台词在画面描述和台词块重复出现会被模型当成两次说话指令,先剥离画面描述里的内嵌台词
       prompt = stripEmbeddedDialogue(prompt, dialogue);
-      const injected = buildDialogueInjection(dialogue, imageUrls.length, speakerMap);
+      const injected = buildDialogueInjection(dialogue, imageUrls.length, speakerMap, Number(data.seconds) || undefined);
       prompt = `${prompt}\n${injected ?? `人物开口说出台词（人声清晰，口型与台词精确同步）："${dialogue}"`}`;
     }
 
