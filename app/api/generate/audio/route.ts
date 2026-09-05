@@ -14,18 +14,17 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { projectId, nodeId: reqNodeId, text, voice = "zh-CN-XiaoxiaoNeural" } = body as {
       projectId: string;
-      nodeId?: string;
+      nodeId: string;
       text: string;
       voice?: string;
     };
-    // nodeId 可选:编排器的台词锚定合成不挂节点,避免污染视频节点状态
-    nodeId = reqNodeId ?? "";
+    nodeId = reqNodeId;
 
     if (!text || !text.trim()) {
       return NextResponse.json({ error: "文本不能为空" }, { status: 400 });
     }
 
-    if (nodeId) updateNodeData(nodeId, { status: "generating", error: undefined });
+    updateNodeData(nodeId, { status: "generating", error: undefined });
 
     const tts = new EdgeTTS({ voice, outputFormat: "audio-24khz-48kbitrate-mono-mp3" });
     const fileName = `audio-${randomUUID()}.mp3`;
@@ -46,7 +45,7 @@ export async function POST(req: NextRequest) {
       .prepare("INSERT INTO media (id, type, remote_url, local_path, mime_type, bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(id, "audio", null, relativePath, "audio/mpeg", fileStat.size, nowTs());
 
-    if (nodeId) updateNodeData(nodeId, {
+    updateNodeData(nodeId, {
       status: "done",
       mediaId: id,
       remoteUrl: `/api/media/${id}`,
