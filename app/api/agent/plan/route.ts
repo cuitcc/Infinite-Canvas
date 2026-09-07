@@ -4,10 +4,15 @@ import { PLAN_SYSTEMS, extractJson } from "@/lib/agent-prompts";
 
 function buildUser(task: string, input: string, shotCount?: number, secondsPerShot?: string): string {
   if (task === "storyboard") {
-    const { outline, assetNames, sceneNames, count } = JSON.parse(input) as { outline: unknown; assetNames: string[]; sceneNames?: string[]; count: number };
+    const { outline, assetNames, sceneNames, count, dialoguePlan } = JSON.parse(input) as {
+      outline: unknown; assetNames: string[]; sceneNames?: string[]; count: number; dialoguePlan?: string[][] | null;
+    };
     const scenes = sceneNames?.length ? `\n可用场景:${sceneNames.join("、")}` : "";
-    // 每镜秒数必须出现在用户消息里,分镜规则 4 的台词量匹配依赖它
-    return `分镜数量:${count}\n每镜秒数:${secondsPerShot ?? "10"}\n剧本大纲:\n${JSON.stringify(outline)}\n可用角色:${assetNames.join("、")}${scenes}`;
+    // 台词分配表由代码算死,分镜师逐字照抄;每镜秒数供运镜/台词节奏参考
+    const planText = Array.isArray(dialoguePlan)
+      ? `\n各镜台词分配表(dialogue 必须逐字照抄,禁止增删改):\n${dialoguePlan.map((lines, i) => `第${i + 1}镜:${lines.length ? lines.join("；") : "(无台词)"}`).join("\n")}`
+      : "";
+    return `分镜数量:${count}\n每镜秒数:${secondsPerShot ?? "10"}${planText}\n剧本大纲:\n${JSON.stringify(outline)}\n可用角色:${assetNames.join("、")}${scenes}`;
   }
   // outline:注入片长容量(分镜数×每镜秒数),供大纲系统提示词的台词总量控制使用
   if (shotCount && secondsPerShot) {

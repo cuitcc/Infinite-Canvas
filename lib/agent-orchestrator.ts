@@ -1,6 +1,7 @@
 "use client";
 
 import { useCanvasStore, type AgentAsset, type AgentShot, type CanvasNodeData } from "./store";
+import { planShotDialogue } from "./dialogue-plan";
 
 // ==================== 类型定义 ====================
 
@@ -288,6 +289,11 @@ async function runStoryboardAndShots(stylePrompt: string) {
     .filter((a) => a.kind === "scene")
     .map((a) => a.name);
 
+  // 台词分配在代码里算死(前缀语义,每镜封顶),分镜师照抄,LLM 无权自行取舍
+  const dialoguePlan = s.outlineJson
+    ? planShotDialogue(s.outlineJson.script, s.outlineJson.characters.map((c) => c.name), s.shotCount, Number(s.shotSeconds) || 10)
+    : null;
+
   const shotsPlan = await plan<Storyboard>(
     "storyboard",
     JSON.stringify({
@@ -296,6 +302,7 @@ async function runStoryboardAndShots(stylePrompt: string) {
       sceneNames,
       count: s.shotCount,
       secondsPerShot: s.shotSeconds,
+      dialoguePlan,
     }),
     s.shotCount,
   );
@@ -303,7 +310,8 @@ async function runStoryboardAndShots(stylePrompt: string) {
   const shots: AgentShot[] = shotsPlan.shots.map((sh, i) => ({
     index: sh.index ?? i + 1,
     description: sh.description,
-    dialogue: sh.dialogue ?? [],
+    // 分配表存在时强制覆盖:即使 LLM 违规塞满/跳句,最终入镜台词也以前缀分配为准
+    dialogue: dialoguePlan ? (dialoguePlan[i] ?? []) : (sh.dialogue ?? []),
     characters: sh.characters ?? [],
     scene: sh.scene ?? "",
     nodeId: null,
