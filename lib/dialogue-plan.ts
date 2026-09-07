@@ -6,24 +6,62 @@
  * 分镜数不够时剩余台词直接舍弃(前缀语义),绝不跳句、绝不追求覆盖全部剧本。
  *
  * 返回:string[shotCount][],每项是该镜的台词行("角色名：台词"),按序照抄进分镜。 */
+
+/** 元信息行的说话人(大纲的结构字段与舞台指示,不是对白) */
+const META_SPEAKERS = /^(梗概|大纲|剧情|角色|人物|场景|题目|片名|片头|类型|标题|旁白|画外音|屏幕|字幕|画面|镜头|备注|说明)$/;
+
+interface ScriptLine {
+  speaker: string;
+  text: string;
+}
+
+/** 从剧本文本提取对白行。names 提供时按"互相包含"匹配角色名并把说话人归一成规范名
+ * (大纲模型会给角色名加头衔:角色表"指挥官索尔" vs 对白行"索尔",严格相等会把整条支线误杀);
+ * names 为 null 时不过滤说话人,只排除元信息行(兜底路径)。 */
+function extractDialogue(script: string, names: Set<string> | null): ScriptLine[] {
+  const lines: ScriptLine[] = [];
+  for (const raw of script.split("\n")) {
+    const line = raw.trim();
+    const m = /^([^\s：:]{1,10})[：:]\s*(.+)$/.exec(line);
+    if (!m) continue;
+    const spoken = m[1];
+    // 剥掉括号内的动作神态(舞台指示),只保留要念出声的台词
+    const text = m[2].replace(/[（(][^）)]*[)）]/g, "").replace(/[。～…\s]+$/, "").trim();
+    if (!text) continue;
+    if (names) {
+      // 精确匹配优先;否则取包含关系中最长的规范名(最长=最具体,如"索尔"→"指挥官索尔")
+      let canonical: string | null = names.has(spoken) ? spoken : null;
+      if (!canonical) {
+        let best = "";
+        for (const n of names) {
+          if ((n.includes(spoken) || spoken.includes(n)) && n.length > best.length) best = n;
+        }
+        canonical = best || null;
+      }
+      if (!canonical) continue;
+      lines.push({ speaker: canonical, text });
+    } else {
+      if (META_SPEAKERS.test(spoken)) continue;
+      lines.push({ speaker: spoken, text });
+    }
+  }
+  return lines;
+}
+
 export function planShotDialogue(
   script: string,
   characterNames: string[],
   shotCount: number,
   secondsPerShot: number,
 ): string[][] {
-  const names = new Set(characterNames);
-  const all: string[] = [];
-  for (const raw of script.split("\n")) {
-    const line = raw.trim();
-    const m = /^([^\s：:]{1,10})[：:]\s*(.+)$/.exec(line);
-    if (!m) continue;
-    // 说话人必须是已定义角色:顺带滤掉"梗概：/场景：/屏幕亮起："等非对白行与旁白
-    if (!names.has(m[1])) continue;
-    // 剥掉括号内的动作神态(舞台指示),只保留要念出声的台词
-    const text = m[2].replace(/[（(][^）)]*[)）]/g, "").replace(/[。～…\s]+$/, "").trim();
-    if (!text) continue;
-    all.push(`${m[1]}：${text}`);
+  const all = extractDialogue(script, new Set(characterNames));
+  // 兜底:严格过滤误杀(0句,或只剩单一说话人——对白剧至少两个角色攻防)时,
+  // 降级为不过滤说话人,只排除元信息行
+  const speakers = new Set(all.map((l) => l.speaker));
+  let lines = all;
+  if (lines.length === 0 || speakers.size <= 1) {
+    const loose = extractDialogue(script, null);
+    if (loose.length > lines.length) lines = loose;
   }
 
   // 每镜封顶:4秒镜1句,6秒镜2句,8秒及以上3句(剧本台词每句≤15字,约4秒)
@@ -32,7 +70,7 @@ export function planShotDialogue(
   const plan: string[][] = [];
   let idx = 0;
   for (let i = 0; i < shotCount; i++) {
-    plan.push(all.slice(idx, idx + perShot));
+    plan.push(lines.slice(idx, idx + perShot).map((l) => `${l.speaker}：${l.text}`));
     idx += perShot;
   }
   return plan; // 超出总容量的台词自然舍弃
