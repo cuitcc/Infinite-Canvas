@@ -416,9 +416,28 @@ async function runStoryboardAndShots(stylePrompt: string) {
     const soundNote = boundDialogue.length
       ? "音轨以人声为主:人声清晰干净、咬字清楚,除台词块中的台词外禁止任何语音(呢喃、喘息、哼唱、旁白都禁止),环境音音量压到最低,无音乐铺底,念完台词的剩余时间保持安静"
       : "音轨只有画面内的现场声:脚步声、衣物摩擦声、器物声响与自然环境音,没有解说旁白,没有任何说话声";
+    // 说话人机位指令(代码注入,不依赖分镜师):直生语音模型只会给"画面最显著的一张嘴"配音,
+    // 必须显式钉死谁开口——说话人嘴部可见,其余人物闭口/背影;分配表里说话人不在本镜参考图时按画外音处理
+    const speakerNote = (() => {
+      if (!boundDialogue.length) return "";
+      const speakers = [...new Set(
+        boundDialogue.map((l) => /^([^：:]+)[：:]/.exec(l.trim())?.[1]?.trim() ?? "").filter(Boolean),
+      )];
+      const parts = speakers.map((sp) => {
+        const idx = refs.findIndex((r) => r.name === sp);
+        return idx >= 0
+          ? `说话时<Picture ${idx + 1}>的${sp}面部朝向镜头或四分之三侧、嘴部清晰可见并有开合说话动作`
+          : `${sp}以画外音说话,画面中不出现其口型`;
+      });
+      const others = refs
+        .map((r, i) => ({ r, i }))
+        .filter(({ r }) => !r.name.startsWith("道具·") && r.name !== "场景" && r.name !== "上一镜尾帧" && !speakers.includes(r.name))
+        .map(({ r, i }) => `<Picture ${i + 1}>的${r.name}闭口倾听或背对镜头`);
+      return `人物说话规则:${parts.join(";")}${others.length ? `;${others.join(",")}` : ""}`;
+    })();
     const nodeId = addAgentNode("video", { x: 800, y: i * 320 }, {
       label: `第${shot.index}镜`,
-      prompt: `${stylePrompt},${tailLead}${shot.description},${identityNote},${soundNote}`,
+      prompt: `${stylePrompt},${tailLead}${shot.description},${identityNote},${soundNote}${speakerNote ? `,${speakerNote}` : ""}`,
       dialogue: boundDialogue.length ? boundDialogue.join("\n") : undefined,
       seconds: s.shotSeconds ?? "10",
       aspectRatio: s.aspectRatio,
