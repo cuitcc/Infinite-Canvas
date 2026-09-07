@@ -275,6 +275,17 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     // 图片→视频:1 张为首帧图生视频;多张为关键帧序列(extra_body.image + keyframes)
     const firstFrameUrl = imageUrls.length === 1 ? imageUrls[0] : undefined;
 
+    // 台词注入:Agnes 可按提示词台词直生人声(Phase 0 实测含音轨),口型与台词同步
+    // 多行台词 + 多张参考图时按行序绑定参考图(lib/dialogue.ts),否则用通用注入
+    // 注入块拼在参考图一致性后缀之前:视频模型对提示词前部权重更高,长提示词尾部的台词指令易被稀释
+    const dialogue = data.dialogue?.trim();
+    if (dialogue && data.kind === "video") {
+      // 同一台词在画面描述和台词块重复出现会被模型当成两次说话指令,先剥离画面描述里的内嵌台词
+      prompt = stripEmbeddedDialogue(prompt, dialogue);
+      const injected = buildDialogueInjection(dialogue, imageUrls.length, speakerMap, Number(data.seconds) || undefined);
+      prompt = `${prompt}\n${injected ?? `人物开口说出台词（人声清晰，口型与台词精确同步）："${dialogue}"`}`;
+    }
+
     // 有参考图时追加一致性描述(Agnes 无身份锁定参数,prompt 是官方唯一手段)
     if (imageUrls.length > 0 && data.kind === "video" && data.lockIdentity !== false) {
       const suffix = imageUrls.length >= 2
@@ -288,16 +299,6 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       if (!prompt.includes("面部特征")) {
         prompt = `${prompt},保持人物面部特征、五官、发型与参考图完全一致`;
       }
-    }
-
-    // 台词注入:Agnes 可按提示词台词直生人声(Phase 0 实测含音轨),口型与台词同步
-    // 多行台词 + 多张参考图时按行序绑定参考图(lib/dialogue.ts),否则用通用注入
-    const dialogue = data.dialogue?.trim();
-    if (dialogue && data.kind === "video") {
-      // 同一台词在画面描述和台词块重复出现会被模型当成两次说话指令,先剥离画面描述里的内嵌台词
-      prompt = stripEmbeddedDialogue(prompt, dialogue);
-      const injected = buildDialogueInjection(dialogue, imageUrls.length, speakerMap, Number(data.seconds) || undefined);
-      prompt = `${prompt}\n${injected ?? `人物开口说出台词（人声清晰，口型与台词精确同步）："${dialogue}"`}`;
     }
 
     if (!prompt.trim()) {

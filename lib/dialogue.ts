@@ -15,7 +15,7 @@ function quoteSpoken(line: string): string {
 function durationNote(seconds: number | undefined, totalChars: number): string {
   if (!seconds || seconds <= 0) return "";
   const est = Math.max(1, Math.round(totalChars / 4));
-  return `本镜时长约${seconds}秒,以上台词念完约${est}秒,剩余时间为沉默、动作与表情,禁止用新的说话内容或旁白填充。`;
+  return `本镜时长约${seconds}秒,以上台词念完约${est}秒,剩余时间为安静的环境与人物动作表情,禁止用任何新增语音填充(含呢喃、喘息、哼唱、旁白)。`;
 }
 
 /** 台词框内容 → 注入提示词的文本。
