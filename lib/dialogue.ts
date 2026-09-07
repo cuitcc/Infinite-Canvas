@@ -18,6 +18,18 @@ function durationNote(seconds: number | undefined, totalChars: number): string {
   return `本镜时长约${seconds}秒,以上台词念完约${est}秒,剩余时间为安静的环境与人物动作表情,禁止用任何新增语音填充(含呢喃、喘息、哼唱、旁白)。`;
 }
 
+/** 台词收尾禁令(多句/单句),两个注入分支共用,保证措辞一致。
+ * 三个靶子:桥接(模型爱在两句间补衔接词/合并到一张嘴念)、吞字含糊(短句+语气词最易发生)、空窗填充(念完继续说)。 */
+const CLOSING_MULTI =
+  "\n以上台词由各自角色分别开口,一人只说自己名下的一句,禁止任何角色替他人念台词,禁止重复台词;" +
+  "台词全文只有这些,每个字都要咬字清晰、完整念出,禁止吞字、含糊带过或拖长音;" +
+  "句与句之间禁止添加任何衔接词、语气词或新台词,禁止把两句合成一句自然对话,禁止把多句合并到一张嘴里念完,句间停顿处保持安静;" +
+  "禁止增加、改写或延伸任何台词,不加旁白解说。";
+const CLOSING_SINGLE =
+  "\n台词全文只有这一句,逐字清晰完整念出,每个字咬字清楚,禁止吞字、含糊带过或拖长音,禁止自行添加语气词或口头禅;" +
+  "念完即止,之后保持安静;" +
+  "禁止增加、改写或延伸任何台词,禁止重复,不加旁白解说。";
+
 /** 台词框内容 → 注入提示词的文本。
  * speakerMap:第 i+1 张参考图对应的角色名(场景图可标"场景"等非说话人名)。
  * 提供且每句台词的说话人都能按名字绑定到参考图时,支持 M 句台词 ≤ N 张参考图,不说台词的角色明确保持倾听;
@@ -49,9 +61,7 @@ export function buildDialogueInjection(dialogue: string, referenceCount: number,
           `<Picture ${i + 1}>中的${name}不说台词${/场景|尾帧|^道具·/.test(name) ? ",仅作画面参考" : ",保持倾听和自然反应"}`);
       // 多人台词时显式禁止"一人念完全部":模型容易把多句台词都交给主角色;
       // 台词总量硬性封顶:模型念完给定句后会自行发挥延伸出大段新台词
-      const closing = parsed.length >= 2
-        ? "\n以上台词由各自角色分别开口,一人只说自己名下的一句,禁止任何角色替他人念台词,禁止重复台词;台词全文只有这些,禁止增加、改写或延伸任何台词,不加旁白解说。"
-        : "\n台词全文只有这一句,逐字念出,禁止增加、改写或延伸任何台词,禁止重复,不加旁白解说,念完即止。";
+      const closing = parsed.length >= 2 ? CLOSING_MULTI : CLOSING_SINGLE;
       return `${header}\n${parts.join("\n")}${withPacing(closing)}${listeners.length ? `\n${listeners.join("，")}` : ""}`;
     }
   }
@@ -81,9 +91,7 @@ export function buildDialogueInjection(dialogue: string, referenceCount: number,
   if (named.length > 0 && named.every((n) => n && n.speaker && n.text)) {
     const header = "台词按角色分配,谁说台词谁开口,口型与台词精确同步:";
     const parts = named.map((n) => `${n!.speaker}说："${n!.text}"`);
-    const closing = named.length >= 2
-      ? "\n以上台词由各自角色分别开口,一人只说自己名下的一句,禁止任何角色替他人念台词,禁止重复台词;台词全文只有这些,禁止增加、改写或延伸任何台词,不加旁白解说。"
-      : "\n台词全文只有这一句,逐字念出,禁止增加、改写或延伸任何台词,禁止重复,不加旁白解说,念完即止。";
+    const closing = named.length >= 2 ? CLOSING_MULTI : CLOSING_SINGLE;
     return `${header}\n${parts.join("\n")}${withPacing(closing)}`;
   }
 

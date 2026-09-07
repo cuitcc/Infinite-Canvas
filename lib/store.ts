@@ -283,7 +283,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       // 同一台词在画面描述和台词块重复出现会被模型当成两次说话指令,先剥离画面描述里的内嵌台词
       prompt = stripEmbeddedDialogue(prompt, dialogue);
       const injected = buildDialogueInjection(dialogue, imageUrls.length, speakerMap, Number(data.seconds) || undefined);
-      prompt = `${prompt}\n${injected ?? `人物开口说出台词（人声清晰，口型与台词精确同步）："${dialogue}"`}`;
+      prompt = `${prompt}\n${injected ?? `人物开口说出台词(人声清晰、咬字清楚,口型与台词精确同步,台词全文只有这些,逐字念出,禁止增加、改写或延伸任何台词,不加旁白解说,念完即止)："${dialogue}"`}`;
     }
 
     // 有参考图时追加一致性描述(Agnes 无身份锁定参数,prompt 是官方唯一手段)
@@ -299,6 +299,12 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       if (!prompt.includes("面部特征")) {
         prompt = `${prompt},保持人物面部特征、五官、发型与参考图完全一致`;
       }
+    }
+
+    // 音轨硬性约束压轴:视频模型对提示词末尾 token 权重最高,音频要求放最后收尾;
+    // 仅带台词的镜头追加(无台词镜头的声音设计已由 agent 烘焙进节点提示词)
+    if (data.kind === "video" && dialogue) {
+      prompt = `${prompt}。音频硬性要求:除台词块中的台词外,全片禁止出现任何其他人声(呢喃、喘息、哼唱、旁白、歌词都禁止),禁止用新的说话内容填充静默,环境音与音乐音量压到最低,台词念完后的剩余时长保持安静`;
     }
 
     if (!prompt.trim()) {
