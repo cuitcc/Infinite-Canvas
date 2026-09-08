@@ -32,8 +32,9 @@ const CLOSING_SINGLE =
 
 /** 台词框内容 → 注入提示词的文本。
  * speakerMap:第 i+1 张参考图对应的角色名(场景图可标"场景"等非说话人名)。
- * 提供且每句台词的说话人都能按名字绑定到参考图时,支持 M 句台词 ≤ N 张参考图,不说台词的角色明确保持倾听;
- * 否则回退:多行台词且行数=参考图数时按行序绑定;都不适用返回 null(调用方回退到通用注入)
+ * 提供且至少一句台词的说话人能按名字绑定到参考图时按名字精确绑定:绑定上的走 <Picture N> 口型同步,
+ * 绑不上的按画外音注入(声音先于画面揭示是常规电影语言,台词不丢、也不挪镜破坏 description 对应关系);
+ * 全部绑不上时回退:多行台词且行数=参考图数时按行序绑定;都不适用返回 null(调用方回退到通用注入)
  * seconds:本镜时长(秒),用于注入时长锚定,让模型把剩余时长留给动作与沉默而非即兴台词 */
 export function buildDialogueInjection(dialogue: string, referenceCount: number, speakerMap?: string[], seconds?: number): string | null {
   const lines = dialogue.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -51,9 +52,15 @@ export function buildDialogueInjection(dialogue: string, referenceCount: number,
       return { speaker: m ? m[1].trim() : "", text: (m ? m[2] : line).trim() };
     });
     const refIndex = (name: string) => speakerMap.findIndex((n) => n === name);
-    if (parsed.length > 0 && parsed.every((p) => p.speaker && p.text && refIndex(p.speaker) >= 0)) {
+    if (parsed.length > 0 && parsed.every((p) => p.speaker && p.text) && parsed.some((p) => refIndex(p.speaker) >= 0)) {
       const header = "台词按角色分配,谁说台词谁开口,口型与台词精确同步:";
-      const parts = parsed.map((p) => `<Picture ${refIndex(p.speaker) + 1}>中的${p.speaker}说："${p.text}"`);
+      const parts = parsed
+        .filter((p) => refIndex(p.speaker) >= 0)
+        .map((p) => `<Picture ${refIndex(p.speaker) + 1}>中的${p.speaker}说："${p.text}"`);
+      // 说话人不在本镜参考图 → 画外音:禁止口型与画面内人形对口,防止模型把画外音配给画面里的人
+      const voiceover = parsed
+        .filter((p) => refIndex(p.speaker) < 0)
+        .map((p) => `${p.speaker}的台词以画外音说："${p.text}"(画外音,画面中任何人物都不得对口型开麦)`);
       const listeners = speakerMap
         .map((name, i) => ({ name, i }))
         .filter(({ name }) => !parsed.some((p) => p.speaker === name))
@@ -62,11 +69,13 @@ export function buildDialogueInjection(dialogue: string, referenceCount: number,
       // 多人台词时显式禁止"一人念完全部":模型容易把多句台词都交给主角色;
       // 台词总量硬性封顶:模型念完给定句后会自行发挥延伸出大段新台词
       const closing = parsed.length >= 2 ? CLOSING_MULTI : CLOSING_SINGLE;
-      return `${header}\n${parts.join("\n")}${withPacing(closing)}${listeners.length ? `\n${listeners.join("，")}` : ""}`;
+      return `${header}\n${[...parts, ...voiceover].join("\n")}${withPacing(closing)}${listeners.length ? `\n${listeners.join("，")}` : ""}`;
     }
   }
 
-  if (referenceCount >= 2 && lines.length === referenceCount) {
+  // 按行序绑定只在无 speakerMap 时启用(手动节点的旧行为):有名字映射时名字优先,
+  // 否则说话人不在参考图中的台词会被错配到行序对应的尾帧/场景图上
+  if (!speakerMap && referenceCount >= 2 && lines.length === referenceCount) {
     const header = "台词按角色分配,谁说台词谁开口,其余人物保持倾听,口型与台词精确同步:";
     // 用户已写明"参考图N/第N张"绑定时原样使用(仅补引号边界),避免二次编号冲突
     if (lines.some((l) => /参考图\s*\d|第\s*\d\s*张/.test(l))) {

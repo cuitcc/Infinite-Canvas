@@ -30,9 +30,9 @@ const CAMERA_VERBS: [RegExp, string][] = [
   [/跟拍|跟随/, "跟"], [/环绕|绕拍/, "环绕"],
 ];
 
-/** 分镜产出校验:相邻景别/主运镜重复、台词与分配表不符。返回违规清单,空数组=合规 */
-function validateStoryboard(data: unknown, count: number, dialoguePlan?: string[][] | null): string[] {
-  const shots = (data as { shots?: { description?: string; dialogue?: string[] }[] })?.shots;
+/** 分镜产出校验:相邻景别/主运镜重复、台词与分配表不符、说话人未出镜。返回违规清单,空数组=合规 */
+export function validateStoryboard(data: unknown, count: number, dialoguePlan?: string[][] | null): string[] {
+  const shots = (data as { shots?: { description?: string; dialogue?: string[]; characters?: string[] }[] })?.shots;
   if (!Array.isArray(shots) || shots.length !== count) {
     return [`分镜数量必须严格等于${count}`];
   }
@@ -53,6 +53,15 @@ function validateStoryboard(data: unknown, count: number, dialoguePlan?: string[
       const got = Array.isArray(s.dialogue) ? s.dialogue : [];
       if (JSON.stringify(want) !== JSON.stringify(got)) {
         issues.push(`第${n}镜 dialogue 必须逐字等于分配表:${want.length ? want.join("；") : "(空数组)"}`);
+      }
+      // 谁说话谁出镜(硬合同):分配表说话人不在该镜 characters 数组时打回,分镜阶段就把人排进画面。
+      // 这是孤儿台词的根治——分配表镜头盲,只有这里能强制 description 与台词在同一镜内对齐
+      const characters = Array.isArray(s.characters) ? s.characters : [];
+      for (const line of want) {
+        const sp = /^([^：:]+)[：:]/.exec(line.trim())?.[1]?.trim();
+        if (sp && !characters.includes(sp)) {
+          issues.push(`第${n}镜分配表台词的说话人"${sp}"不在该镜 characters 数组中,必须让说话人出镜:把"${sp}"加入 characters,并在 description 中安排其出场与说话动作`);
+        }
       }
     }
   });

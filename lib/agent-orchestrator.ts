@@ -1,7 +1,7 @@
 "use client";
 
 import { useCanvasStore, type AgentAsset, type AgentShot, type CanvasNodeData } from "./store";
-import { planShotDialogue, reallocateDialogue, shotLineCap } from "./dialogue-plan";
+import { planShotDialogue } from "./dialogue-plan";
 
 // ==================== 类型定义 ====================
 
@@ -339,23 +339,6 @@ async function runStoryboardAndShots(stylePrompt: string) {
   // 上一镜尾帧衔接:{ nodeId, url } | null;截帧失败、上一镜跳过或下一镜换场景时为 null(仅同场景镜衔接)
   let prevTail: { nodeId: string; url: string } | null = null;
 
-  // 孤儿台词顺延:分配表是镜头盲的(分镜前按顺序切分,不知道每镜谁出镜),分镜把说话人
-  // 不在场的镜头照常产出后,绑定防线会静默丢弃那些台词(实测:第1镜分到龙猫台词但龙猫
-  // 第2镜才登场,整句消失)。按顺序顺延到下一个说话人出镜且未满容量的镜头;
-  // 全片无人出镜/容量耗尽的留在卡住的镜头作画外音,不再静默丢失
-  const shotSpeakers = shots.map((sh) => {
-    const names = new Set<string>();
-    for (const a of s.assets) {
-      if (a.kind === "character" && a.nodeId && a.status === "done" && sh.characters.includes(a.name)) names.add(a.name);
-    }
-    return names;
-  });
-  const reallocatedDialogue = reallocateDialogue(
-    dialoguePlan ? dialoguePlan.flat() : shots.flatMap((sh) => sh.dialogue ?? []),
-    shotSpeakers,
-    shotLineCap(Number(s.shotSeconds) || 10),
-  );
-
   for (let i = 0; i < shots.length; i++) {
     if (aborted) return;
     const shot = shots[i];
@@ -410,14 +393,10 @@ async function runStoryboardAndShots(stylePrompt: string) {
       ? `本镜视频必须从<Picture ${tailIdx + 1}>(上一镜结尾画面)起播,开头画面与它完全一致,`
       : "";
 
-    // 台词只保留说话人能绑定到参考图的行:否则 buildDialogueInjection 精确绑定整体失效,
-    // 回退成整块引号注入,模型会让第一个角色念完全部台词。
-    // 来源是顺延后的 reallocatedDialogue(孤儿台词已搬到说话人出镜的镜头),此过滤只作最后防线
-    const speakerSet = new Set(refs.map((r) => r.name));
-    const boundDialogue = (reallocatedDialogue[i] ?? []).filter((l) => {
-      const m = /^([^：:]+)[：:]/.exec(l.trim());
-      return !!m && speakerSet.has(m[1].trim());
-    });
+    // 台词全量保留,不做绑定过滤:说话人绑不上参考图的行由 buildDialogueInjection 按画外音注入
+    // (声音先于画面揭示是常规电影语言),不再静默丢弃(实测丢弃导致整句从片中消失)。
+    // 孤儿台词的根治在校验层:validateStoryboard 强制"分配表说话人 ∈ 该镜 characters",分镜阶段就把人排进画面
+    const shotDialogue = (shot.dialogue ?? []).filter((l) => /^([^：:]+)[：:]/.test(l.trim()));
 
     // 官方 <Picture N> 占位符逐张声明参考图用途:只锁外形,动作朝向机位以提示词为准(立绘正面站姿会被连姿势复制)
     const identityNote = refs
@@ -431,15 +410,15 @@ async function runStoryboardAndShots(stylePrompt: string) {
       .join(";");
     // 声音设计(官方六要素之一):有台词锁定干净人声——撤销"现场动作音效"授权(实测模型会拿它
     // 填台词空窗,即兴加语音+环境音盖过人声);无台词用正面声音描述压住旁白幻觉(否定式实测无效)
-    const soundNote = boundDialogue.length
+    const soundNote = shotDialogue.length
       ? "音轨以人声为主:人声清晰干净、咬字清楚,除台词块中的台词外禁止任何语音(呢喃、喘息、哼唱、旁白都禁止),环境音音量压到最低,无音乐铺底,念完台词的剩余时间保持安静"
       : "音轨只有画面内的现场声:脚步声、衣物摩擦声、器物声响与自然环境音,没有解说旁白,没有任何说话声";
     // 说话人机位指令(代码注入,不依赖分镜师):直生语音模型只会给"画面最显著的一张嘴"配音,
     // 必须显式钉死谁开口——说话人嘴部可见,其余人物闭口/背影;分配表里说话人不在本镜参考图时按画外音处理
     const speakerNote = (() => {
-      if (!boundDialogue.length) return "";
+      if (!shotDialogue.length) return "";
       const speakers = [...new Set(
-        boundDialogue.map((l) => /^([^：:]+)[：:]/.exec(l.trim())?.[1]?.trim() ?? "").filter(Boolean),
+        shotDialogue.map((l) => /^([^：:]+)[：:]/.exec(l.trim())?.[1]?.trim() ?? "").filter(Boolean),
       )];
       const parts = speakers.map((sp) => {
         const idx = refs.findIndex((r) => r.name === sp);
@@ -456,7 +435,7 @@ async function runStoryboardAndShots(stylePrompt: string) {
     const nodeId = addAgentNode("video", { x: 800, y: i * 320 }, {
       label: `第${shot.index}镜`,
       prompt: `${stylePrompt},${tailLead}${shot.description},${identityNote},${soundNote}${speakerNote ? `,${speakerNote}` : ""}`,
-      dialogue: boundDialogue.length ? boundDialogue.join("\n") : undefined,
+      dialogue: shotDialogue.length ? shotDialogue.join("\n") : undefined,
       seconds: s.shotSeconds ?? "10",
       aspectRatio: s.aspectRatio,
       model: "agnes-video-2.5-flash",
