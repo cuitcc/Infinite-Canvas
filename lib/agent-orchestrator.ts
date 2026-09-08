@@ -426,13 +426,13 @@ async function runStoryboardAndShots(stylePrompt: string) {
       const parts = speakers.map((sp) => {
         const idx = refs.findIndex((r) => r.name === sp);
         return idx >= 0
-          ? `说话时<Picture ${idx + 1}>的${sp}面部朝向镜头或四分之三侧、嘴部清晰可见并有开合说话动作`
+          ? `说话时<Picture ${idx + 1}>的${sp}与对话对象面对面或四分之三侧相对,嘴部清晰可见并有开合说话动作,视线落在对方身上,禁止转向镜头说话`
           : `${sp}以画外音说话,画面中不出现其口型`;
       });
       const others = refs
         .map((r, i) => ({ r, i }))
         .filter(({ r }) => !r.name.startsWith("道具·") && r.name !== "场景" && r.name !== "上一镜尾帧" && !speakers.includes(r.name))
-        .map(({ r, i }) => `<Picture ${i + 1}>的${r.name}闭口倾听或背对镜头`);
+        .map(({ r, i }) => `<Picture ${i + 1}>的${r.name}闭口倾听,身体侧对或背对镜头,不看镜头`);
       return `人物说话规则:${parts.join(";")}${others.length ? `;${others.join(",")}` : ""}`;
     })();
     const nodeId = addAgentNode("video", { x: 800, y: i * 320 }, {
