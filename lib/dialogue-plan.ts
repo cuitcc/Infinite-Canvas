@@ -75,6 +75,54 @@ function shotLineCap(secondsPerShot: number): number {
   return secondsPerShot <= 4 ? 1 : secondsPerShot <= 6 ? 2 : 3;
 }
 
+/** 剧本台词量下限:分镜容量的一半(低于此值后半片必然是无台词空镜,实测 6 镜只写 6 句) */
+export function minScriptLines(shotCount: number, secondsPerShot: number): number {
+  return Math.max(4, Math.ceil((shotCount * shotLineCap(secondsPerShot)) / 2));
+}
+
+/** 台词文本中的亲属称谓:提及但角色表中没有时即为"幽灵角色"(实测台词喊"姐姐"而全片无此人) */
+const FAMILY_TITLES = ["姐姐", "妹妹", "哥哥", "弟弟", "爸爸", "妈妈", "父亲", "母亲", "爷爷", "奶奶", "外公", "外婆", "叔叔", "阿姨"];
+
+/** 大纲剧本硬校验(分配前的最后一道闸)。提示词约束对 LLM 不可靠(分镜阶段三连教训),大纲同样上
+ * "检查-反馈-重试"合同。实测翻车:6镜42秒只写6句台词(后4镜全程无声)、1字超短句"唔..."、
+ * 台词提及"姐姐"但角色表没有(资产阶段不会生成,画面里对着空气说话)。 */
+export function auditScript(script: string, characterNames: string[], minLines: number | null): string[] {
+  const names = new Set(characterNames);
+  // 用 null(names 过滤关)提取:审计要看全部原始行,而不是分配层静默丢弃后的残部
+  const lines = extractDialogue(script, null);
+  const issues: string[] = [];
+  // 1) 说话人必须是角色表成员:分配层对陌生人台词是静默丢弃的,内容会无声消失
+  const unknown = [...new Set(lines.map((l) => l.speaker).filter((sp) => !canonicalSpeaker(sp, names)))];
+  if (unknown.length) {
+    issues.push(`台词说话人 ${unknown.join("、")} 不在 characters 角色表中,对白行说话人必须与 characters 的 name 逐字一致`);
+  }
+  // 2) 句长带宽:下限杀"唔..."式超短句(一镜念不满还诱发音频即兴填充),上限防一镜超时
+  const badLen = lines.filter((l) => l.text.length < 9 || l.text.length > 20);
+  if (badLen.length) {
+    issues.push(`每句台词必须9~20字(目标12~15字):${badLen.map((l) => `"${l.text}"(${l.text.length}字)`).join("、")}`);
+  }
+  // 3) 省略号禁令:实测"这...这是"会诱导模型拖长音或即兴续写
+  const dotted = lines.filter((l) => l.text.includes("...") || l.text.includes("…"));
+  if (dotted.length) {
+    issues.push(`台词中禁止省略号(.../…),改写成完整句:${dotted.map((l) => `"${l.text}"`).join("、")}`);
+  }
+  // 4) 台词量下限:写太少则分镜装不满,后半片全程无对白
+  if (minLines && lines.length < minLines) {
+    issues.push(`台词仅${lines.length}句,至少需要${minLines}句(分镜容量的一半),请继续写后续剧情的对白`);
+  }
+  // 5) 幽灵亲属:台词提及亲属称谓但角色表无此角色,画面没有对应参考图可挂
+  const mentioned = new Set<string>();
+  for (const l of lines) {
+    for (const t of FAMILY_TITLES) {
+      if (l.text.includes(t) && !names.has(t) && ![...names].some((n) => n.includes(t))) mentioned.add(t);
+    }
+  }
+  if (mentioned.size) {
+    issues.push(`台词提及 ${[...mentioned].join("、")} 但 characters 中没有该角色:要么将其加入 characters(会生成参考图),要么改写台词不再提及`);
+  }
+  return issues;
+}
+
 export function planShotDialogue(
   script: string,
   characterNames: string[],
