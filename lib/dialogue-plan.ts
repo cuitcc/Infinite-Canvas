@@ -15,34 +15,56 @@ interface ScriptLine {
   text: string;
 }
 
-/** 从剧本文本提取对白行。names 提供时按"互相包含"匹配角色名并把说话人归一成规范名
- * (大纲模型会给角色名加头衔:角色表"指挥官索尔" vs 对白行"索尔",严格相等会把整条支线误杀);
- * names 为 null 时不过滤说话人,只排除元信息行(兜底路径)。 */
+/** 归一说话人:精确匹配优先;否则取包含关系中最长的规范名(最长=最具体,如"索尔"→"指挥官索尔") */
+function canonicalSpeaker(spoken: string, names: Set<string>): string | null {
+  if (names.has(spoken)) return spoken;
+  let best = "";
+  for (const n of names) {
+    if ((n.includes(spoken) || spoken.includes(n)) && n.length > best.length) best = n;
+  }
+  return best || null;
+}
+
+function pushLine(lines: ScriptLine[], spoken: string, rawText: string, names: Set<string> | null) {
+  // 剥掉括号动作神态(舞台指示)与半角"..."(省略号收尾会引诱模型续写台词),只保留要念出声的台词
+  const text = rawText.replace(/[（(][^）)]*[)）]/g, "").replace(/[。～…\s]+$/, "").replace(/\.{2,}$/, "").trim();
+  if (!text) return;
+  if (names) {
+    const canonical = canonicalSpeaker(spoken, names);
+    if (!canonical) return;
+    lines.push({ speaker: canonical, text });
+  } else {
+    if (META_SPEAKERS.test(spoken)) return;
+    lines.push({ speaker: spoken, text });
+  }
+}
+
+/** 从剧本文本提取对白行。names 提供时按"互相包含"匹配角色名并把说话人归一成规范名;
+ * names 为 null 时不过滤说话人,只排除元信息行(兜底路径)。
+ * 行级容错:大纲模型会把多句台词挤在同一物理行("A：xx。B：yy。A：zz",实测 2026-09-07 全部台词
+ * 一行导致第一镜装入全部台词),行内按"句末标点+说话人冒号"边界二次切分,不指望 LLM 守换行格式。 */
 function extractDialogue(script: string, names: Set<string> | null): ScriptLine[] {
   const lines: ScriptLine[] = [];
   for (const raw of script.split("\n")) {
     const line = raw.trim();
     const m = /^([^\s：:]{1,10})[：:]\s*(.+)$/.exec(line);
     if (!m) continue;
-    const spoken = m[1];
-    // 剥掉括号内的动作神态(舞台指示),只保留要念出声的台词
-    const text = m[2].replace(/[（(][^）)]*[)）]/g, "").replace(/[。～…\s]+$/, "").trim();
-    if (!text) continue;
-    if (names) {
-      // 精确匹配优先;否则取包含关系中最长的规范名(最长=最具体,如"索尔"→"指挥官索尔")
-      let canonical: string | null = names.has(spoken) ? spoken : null;
-      if (!canonical) {
-        let best = "";
-        for (const n of names) {
-          if ((n.includes(spoken) || spoken.includes(n)) && n.length > best.length) best = n;
-        }
-        canonical = best || null;
-      }
-      if (!canonical) continue;
-      lines.push({ speaker: canonical, text });
+    const body = m[2];
+    const boundary = /(?:^|[。！？；～])\s*[^\s：:，。！？；]{1,10}[：:]/g;
+    const cuts: { speaker: string; from: number; textStart: number }[] = [];
+    for (const b of body.matchAll(boundary)) {
+      const sp = b[0].replace(/^[。！？；～]/, "").replace(/[：:]$/, "").trim();
+      cuts.push({ speaker: sp, from: b.index, textStart: b.index + b[0].length });
+    }
+    if (cuts.length <= 1) {
+      pushLine(lines, m[1], body, names);
     } else {
-      if (META_SPEAKERS.test(spoken)) continue;
-      lines.push({ speaker: spoken, text });
+      // 首段归行首说话人,其余各段归各边界处的说话人,段尾句末标点由 pushLine 剥除
+      pushLine(lines, m[1], body.slice(0, cuts[0].from), names);
+      for (let i = 0; i < cuts.length; i++) {
+        const to = i + 1 < cuts.length ? cuts[i + 1].from : body.length;
+        pushLine(lines, cuts[i].speaker, body.slice(cuts[i].textStart, to), names);
+      }
     }
   }
   return lines;
