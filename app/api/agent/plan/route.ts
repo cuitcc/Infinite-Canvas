@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAgnesChatCompletion } from "@/lib/agnes-chat";
 import { PLAN_SYSTEMS, extractJson } from "@/lib/agent-prompts";
-import { auditScript, minScriptLines } from "@/lib/dialogue-plan";
+import { auditScript, minScriptLines, scriptCapacity } from "@/lib/dialogue-plan";
 
 function buildUser(task: string, input: string, shotCount?: number, secondsPerShot?: string, retryIssues?: string[]): string {
   if (task === "storyboard") {
@@ -32,7 +32,8 @@ function validateOutline(data: unknown, shotCount?: number, secondsPerShot?: str
   const names = (Array.isArray(o.characters) ? o.characters : []).map((c) => (c.name ?? "").trim()).filter(Boolean);
   if (!names.length) return ["characters 角色表不能为空"];
   const minLines = shotCount && secondsPerShot ? minScriptLines(shotCount, Number(secondsPerShot)) : null;
-  return auditScript(o.script ?? "", names, minLines);
+  const capacity = shotCount && secondsPerShot ? scriptCapacity(shotCount, Number(secondsPerShot)) : null;
+  return auditScript(o.script ?? "", names, minLines, capacity);
 }
 
 /** description 提及是否为"实义出场"(D:提及≠出镜)。同分句内含抽象语境词(暗示/幻觉/轮廓/剪影等)
@@ -78,6 +79,11 @@ export function validateStoryboard(data: unknown, count: number, dialoguePlan?: 
     if (verb && verb === prevVerb) issues.push(`第${n - 1}镜与第${n}镜主运镜重复(${verb}),相邻两镜主运镜必须不同`);
     // B:同场景起幅衔接合同——上一镜落幅景别与本镜起幅景别必须一致(实测起幅写全新构图,尾帧参考被完全无视)
     const prev = shots[i - 1];
+    // E:落幅必填——B 合同的锚点:LLM 省写"落幅至X"时 B 检查空转(实测第2/3镜无落幅,2→3、3→4 剪切点构图跳变)
+    const curEnd = /落幅至?(远景|全景|中景|近景|特写)/.exec(desc)?.[1];
+    if (!curEnd) {
+      issues.push(`第${n}镜 description 缺少"落幅至X"的景别标注:必须写明运镜三段式并以"落幅至远景/全景/中景/近景/特写"收束(下一镜的起幅衔接以此为准)`);
+    }
     if (i > 0 && s.scene && prev?.scene && s.scene === prev.scene) {
       const prevEnd = /落幅至?(远景|全景|中景|近景|特写)/.exec(prev.description ?? "")?.[1];
       const curStart = /^[^。]*?(远景|全景|中景|近景|特写)/.exec(desc)?.[1];

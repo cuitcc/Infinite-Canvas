@@ -75,9 +75,14 @@ function shotLineCap(secondsPerShot: number): number {
   return secondsPerShot <= 4 ? 1 : secondsPerShot <= 6 ? 2 : 3;
 }
 
+/** 全片可装入的台词总句数(分镜容量):超出容量的台词被前缀截断语义舍弃 */
+export function scriptCapacity(shotCount: number, secondsPerShot: number): number {
+  return shotCount * shotLineCap(secondsPerShot);
+}
+
 /** 剧本台词量下限:分镜容量的一半(低于此值后半片必然是无台词空镜,实测 6 镜只写 6 句) */
 export function minScriptLines(shotCount: number, secondsPerShot: number): number {
-  return Math.max(4, Math.ceil((shotCount * shotLineCap(secondsPerShot)) / 2));
+  return Math.max(4, Math.ceil(scriptCapacity(shotCount, secondsPerShot) / 2));
 }
 
 /** 台词文本中的亲属称谓:提及但角色表中没有时即为"幽灵角色"(实测台词喊"姐姐"而全片无此人) */
@@ -86,7 +91,7 @@ const FAMILY_TITLES = ["姐姐", "妹妹", "哥哥", "弟弟", "爸爸", "妈妈
 /** 大纲剧本硬校验(分配前的最后一道闸)。提示词约束对 LLM 不可靠(分镜阶段三连教训),大纲同样上
  * "检查-反馈-重试"合同。实测翻车:6镜42秒只写6句台词(后4镜全程无声)、1字超短句"唔..."、
  * 台词提及"姐姐"但角色表没有(资产阶段不会生成,画面里对着空气说话)。 */
-export function auditScript(script: string, characterNames: string[], minLines: number | null): string[] {
+export function auditScript(script: string, characterNames: string[], minLines: number | null, capacityLines: number | null = null): string[] {
   const names = new Set(characterNames);
   // 用 null(names 过滤关)提取:审计要看全部原始行,而不是分配层静默丢弃后的残部
   const lines = extractDialogue(script, null);
@@ -119,6 +124,16 @@ export function auditScript(script: string, characterNames: string[], minLines: 
   }
   if (mentioned.size) {
     issues.push(`台词提及 ${[...mentioned].join("、")} 但 characters 中没有该角色:要么将其加入 characters(会生成参考图),要么改写台词不再提及`);
+  }
+  // 6) 角色必须在可装入容量内有戏份(实测:对立面"猎人"的台词全部落在容量之外,立绘资产白生成、剧情留死钩子)
+  if (capacityLines) {
+    const loadedSpeakers = lines.slice(0, capacityLines).map((l) => l.speaker);
+    const orphan = characterNames.filter(
+      (n) => !loadedSpeakers.some((sp) => sp === n || sp.includes(n) || n.includes(sp)),
+    );
+    if (orphan.length && lines.length > 0) {
+      issues.push(`角色 ${orphan.join("、")} 的台词全部落在可装入容量(前${capacityLines}句)之外,这些戏份会被截断丢弃,资产也将白生成:要么让其在台词前段就有戏份,要么从 characters 中移除该角色`);
+    }
   }
   return issues;
 }

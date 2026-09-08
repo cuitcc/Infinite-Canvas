@@ -387,10 +387,12 @@ async function runStoryboardAndShots(stylePrompt: string) {
     const refIds = refs.map((r) => r.id);
     const refNames: Record<string, string> = Object.fromEntries(refs.map((r) => [r.id, r.name]));
 
-    // 尾帧首帧声明放提示词最前(开头 token 权重最高,埋在 200 字后实测会被弱化);identityNote 里的尾帧从句二次强化
+    // 尾帧首帧声明放提示词最前(开头 token 权重最高,埋在 200 字后实测会被弱化);identityNote 里的尾帧从句二次强化。
+    // F:尾帧一致必须只锁第0帧——实测"开头画面与它完全一致"过强,模型为守住尾帧世界状态直接吞掉
+    // 本镜核心事件(第6镜"巨树破土而出"被吞,全程只有角色抬头反应),故显式授权第1帧起展开事件
     const tailIdx = refs.findIndex((r) => r.name === "上一镜尾帧");
     const tailLead = tailIdx >= 0
-      ? `本镜视频必须从<Picture ${tailIdx + 1}>(上一镜结尾画面)起播,开头画面与它完全一致,`
+      ? `本镜视频必须从<Picture ${tailIdx + 1}>(上一镜结尾画面)起播,只有第0帧画面与它完全一致,从第1帧起立即展开本镜描述的核心事件,`
       : "";
 
     // 台词全量保留,不做绑定过滤:说话人绑不上参考图的行由 buildDialogueInjection 按画外音注入
@@ -403,7 +405,7 @@ async function runStoryboardAndShots(stylePrompt: string) {
       .map((r, i) => {
         const p = `<Picture ${i + 1}>`;
         if (r.name === "场景") return `${p}为场景与氛围参考`;
-        if (r.name === "上一镜尾帧") return `${p}是上一镜结尾画面,本镜必须直接从这一画面开始(把它当作首帧):开头画面与它完全一致,人物位置、朝向、服装与场景状态从它延续,再完成本镜描述的新动作与新机位运镜`;
+        if (r.name === "上一镜尾帧") return `${p}是上一镜结尾画面,本镜必须直接从这一画面开始(把它当作首帧):仅第0帧与它完全一致,人物位置、朝向、服装与场景状态从它延续,随后本镜描述的核心事件(动作、变化、视觉事件)必须真实发生并成为画面主体,禁止只拍角色反应而跳过事件本身`;
         if (r.name.startsWith("道具·")) return `${p}为道具${r.name.slice(3)}的形制参考`;
         return `${p}为${r.name}的长相、发型与服装参考,只取外形,其站姿与朝向不作参考`;
       })
