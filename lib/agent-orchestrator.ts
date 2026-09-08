@@ -336,7 +336,7 @@ async function runStoryboardAndShots(stylePrompt: string) {
     }
   }
 
-  // 上一镜尾帧衔接:{ nodeId, url } | null;截帧失败或上一镜跳过时为 null
+  // 上一镜尾帧衔接:{ nodeId, url } | null;截帧失败、上一镜跳过或下一镜换场景时为 null(仅同场景镜衔接)
   let prevTail: { nodeId: string; url: string } | null = null;
 
   for (let i = 0; i < shots.length; i++) {
@@ -456,8 +456,10 @@ async function runStoryboardAndShots(stylePrompt: string) {
     shots[i] = { ...shots[i], status: ok ? "done" : "skipped" };
     patch({ shots: [...shots] });
 
-    // 生成成功则截取尾帧供下一镜衔接;失败则清空,下一镜降级为无尾帧
-    if (!ok || i + 1 >= shots.length || aborted) {
+    // 生成成功则截取尾帧供下一镜衔接;失败或下一镜换了场景则清空——
+    // 场景切换镜喂上一镜尾帧反而误导模型(场景都变了还要求从旧画面起播),衔接只服务同场景镜头
+    const nextScene = shots[i + 1]?.scene;
+    if (!ok || i + 1 >= shots.length || aborted || (!!nextScene && !!shot.scene && nextScene !== shot.scene)) {
       prevTail = null;
       continue;
     }

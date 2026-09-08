@@ -24,13 +24,13 @@ function buildUser(task: string, input: string, shotCount?: number, secondsPerSh
 }
 
 const SHOT_SIZES = ["远景", "全景", "中景", "近景", "特写"] as const;
-/** 运镜词 → 规范类别:子串匹配容易误伤("推开门"),只认显式运镜表述 */
+/** 运镜词 → 规范类别:与提示词允许的缓慢运镜词表对齐;子串匹配容易误伤("推开门"),只认显式运镜表述 */
 const CAMERA_VERBS: [RegExp, string][] = [
-  [/推镜|推近|推进|缓推/, "推"], [/拉镜|拉远|缓拉/, "拉"], [/摇镜|摇拍/, "摇"], [/横移|移镜|平移/, "移"],
-  [/跟拍|跟随/, "跟"], [/升降|上升|下降/, "升降"], [/环绕|绕拍|弧形/, "环绕"], [/手持/, "手持"], [/甩镜/, "甩镜"], [/变焦/, "变焦"],
+  [/推镜|推近|推进|缓推/, "推"], [/拉镜|拉远|缓拉/, "拉"], [/摇镜|摇拍|缓慢摇/, "摇"], [/横移|移镜|平移/, "移"],
+  [/跟拍|跟随/, "跟"], [/环绕|绕拍/, "环绕"],
 ];
 
-/** 分镜产出校验:相邻景别/主运镜重复、衔接句缺失、台词与分配表不符。返回违规清单,空数组=合规 */
+/** 分镜产出校验:相邻景别/主运镜重复、台词与分配表不符。返回违规清单,空数组=合规 */
 function validateStoryboard(data: unknown, count: number, dialoguePlan?: string[][] | null): string[] {
   const shots = (data as { shots?: { description?: string; dialogue?: string[] }[] })?.shots;
   if (!Array.isArray(shots) || shots.length !== count) {
@@ -42,7 +42,6 @@ function validateStoryboard(data: unknown, count: number, dialoguePlan?: string[
   shots.forEach((s, i) => {
     const n = i + 1;
     const desc = s.description ?? "";
-    if (i > 0 && !desc.slice(0, 60).includes("承接上镜")) issues.push(`第${n}镜 description 开头缺"承接上镜"衔接句`);
     const size = SHOT_SIZES.find((w) => desc.includes(w)) ?? "";
     const verb = CAMERA_VERBS.find(([re]) => re.test(desc))?.[1] ?? "";
     if (size && size === prevSize) issues.push(`第${n - 1}镜与第${n}镜景别重复(${size}),相邻两镜景别必须变化`);
