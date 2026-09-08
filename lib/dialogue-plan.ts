@@ -70,6 +70,11 @@ function extractDialogue(script: string, names: Set<string> | null): ScriptLine[
   return lines;
 }
 
+/** 每镜台词封顶:4秒镜1句,6秒镜2句,8秒及以上3句(剧本台词每句≤15字,约4秒) */
+export function shotLineCap(secondsPerShot: number): number {
+  return secondsPerShot <= 4 ? 1 : secondsPerShot <= 6 ? 2 : 3;
+}
+
 export function planShotDialogue(
   script: string,
   characterNames: string[],
@@ -86,8 +91,7 @@ export function planShotDialogue(
     if (loose.length > lines.length) lines = loose;
   }
 
-  // 每镜封顶:4秒镜1句,6秒镜2句,8秒及以上3句(剧本台词每句≤15字,约4秒)
-  const perShot = secondsPerShot <= 4 ? 1 : secondsPerShot <= 6 ? 2 : 3;
+  const perShot = shotLineCap(secondsPerShot);
 
   const plan: string[][] = [];
   let idx = 0;
@@ -96,4 +100,28 @@ export function planShotDialogue(
     idx += perShot;
   }
   return plan; // 超出总容量的台词自然舍弃
+}
+
+/** 分镜返回后的孤儿台词顺延(A方案)。
+ *
+ * planShotDialogue 是镜头盲的:分配表在分镜画出之前按顺序切分,不知道每镜谁出镜。
+ * 分镜把"说话人不在场"的镜头照常产出后(实测:第1镜分到龙猫台词但龙猫第2镜才登场,
+ * 绑定防线把台词静默丢弃,整句从片中消失),按顺序把装不下的台词顺延到下一个
+ * 说话人出镜且未满容量的镜头;全片都装不下/无人出镜时留在卡住的镜头(超容量,
+ * 走画外音注入兜底),不再静默丢失。指针只前进,保证台词顺序与剧本一致。 */
+export function reallocateDialogue(lines: string[], speakerSets: Array<Set<string>>, cap: number): string[][] {
+  const plan: string[][] = speakerSets.map(() => []);
+  let cur = 0;
+  for (const line of lines) {
+    const sp = /^([^：:]+)[：:]/.exec(line.trim())?.[1]?.trim() ?? "";
+    let j = cur;
+    while (j < plan.length && !(sp !== "" && speakerSets[j].has(sp) && plan[j].length < cap)) j++;
+    if (j < plan.length) {
+      plan[j].push(line);
+      cur = j;
+    } else if (cur < plan.length) {
+      plan[cur].push(line); // C兜底:无人出镜或容量耗尽→原镜画外音(speakerNote 对不在场说话人按画外音注入)
+    }
+  }
+  return plan;
 }

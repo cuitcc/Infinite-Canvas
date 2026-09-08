@@ -1,7 +1,7 @@
 "use client";
 
 import { useCanvasStore, type AgentAsset, type AgentShot, type CanvasNodeData } from "./store";
-import { planShotDialogue } from "./dialogue-plan";
+import { planShotDialogue, reallocateDialogue, shotLineCap } from "./dialogue-plan";
 
 // ==================== 类型定义 ====================
 
@@ -339,6 +339,23 @@ async function runStoryboardAndShots(stylePrompt: string) {
   // 上一镜尾帧衔接:{ nodeId, url } | null;截帧失败、上一镜跳过或下一镜换场景时为 null(仅同场景镜衔接)
   let prevTail: { nodeId: string; url: string } | null = null;
 
+  // 孤儿台词顺延:分配表是镜头盲的(分镜前按顺序切分,不知道每镜谁出镜),分镜把说话人
+  // 不在场的镜头照常产出后,绑定防线会静默丢弃那些台词(实测:第1镜分到龙猫台词但龙猫
+  // 第2镜才登场,整句消失)。按顺序顺延到下一个说话人出镜且未满容量的镜头;
+  // 全片无人出镜/容量耗尽的留在卡住的镜头作画外音,不再静默丢失
+  const shotSpeakers = shots.map((sh) => {
+    const names = new Set<string>();
+    for (const a of s.assets) {
+      if (a.kind === "character" && a.nodeId && a.status === "done" && sh.characters.includes(a.name)) names.add(a.name);
+    }
+    return names;
+  });
+  const reallocatedDialogue = reallocateDialogue(
+    dialoguePlan ? dialoguePlan.flat() : shots.flatMap((sh) => sh.dialogue ?? []),
+    shotSpeakers,
+    shotLineCap(Number(s.shotSeconds) || 10),
+  );
+
   for (let i = 0; i < shots.length; i++) {
     if (aborted) return;
     const shot = shots[i];
@@ -394,9 +411,10 @@ async function runStoryboardAndShots(stylePrompt: string) {
       : "";
 
     // 台词只保留说话人能绑定到参考图的行:否则 buildDialogueInjection 精确绑定整体失效,
-    // 回退成整块引号注入,模型会让第一个角色念完全部台词
+    // 回退成整块引号注入,模型会让第一个角色念完全部台词。
+    // 来源是顺延后的 reallocatedDialogue(孤儿台词已搬到说话人出镜的镜头),此过滤只作最后防线
     const speakerSet = new Set(refs.map((r) => r.name));
-    const boundDialogue = shot.dialogue.filter((l) => {
+    const boundDialogue = (reallocatedDialogue[i] ?? []).filter((l) => {
       const m = /^([^：:]+)[：:]/.exec(l.trim());
       return !!m && speakerSet.has(m[1].trim());
     });
