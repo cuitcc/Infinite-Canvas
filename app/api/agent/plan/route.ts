@@ -55,6 +55,25 @@ function mentionedAsPresent(desc: string, name: string): boolean {
   return false;
 }
 
+/** 说话人是否被安排了"出场+动作"。实测"四分之三侧身面对高台上的指挥官索尔"这类纯朝向提及
+ * 会让 C' 空转——索尔的台词在画面里没有任何动作对应,模型只能即兴处理;提及≠出场,出场必须有戏。
+ * 归属口径:句级(中文主语承前省略,动作常在名字后的逗号分句里,子句级会大面积误报),
+ * 但名字仅出现在"面对/朝向+名字"宾语位置时不算——动作属于句子主语,不属于说话人。
+ * 动作词表全部用双字安全形式:单字"指/推/拉/念"会撞上"指挥官/推近/概念"等普通词素 */
+const SPEECH_STAGING = /现身|入画|登场|露面|开口|说道|说话|告诉|脱口|问道|质问|追问|逼问|问出|发问|答道|回答|应答|应声|回应|反驳|低语|大喊|呼喊|喊道|怒吼|吼道|嘀咕|命令|解释|强调|诉说|讲述|讲话|张口|张嘴|嘴巴|嘴唇|嘴角|咬牙|皱眉|瞪着|瞪大|凝视|盯着|注视|目光|眼神|表情|神色|神情|面部|攥|紧握|握着|握住|举起|抬手|抬起|挥动|挥手|挥舞|拍了拍|拍拍|指向|指着|侧目|转身|回头|前倾|后退|站起|起身|坐下|跪下|跪地|点头|摇头|道谢|道别|告别|致意|叮嘱|嘱咐|安慰|问候|打招呼/;
+
+function stagedWithAction(desc: string, name: string): boolean {
+  for (const sentence of desc.split(/[。；;]/)) {
+    if (!sentence.includes(name)) continue;
+    const clauses = sentence.split(/[，,]/);
+    const nameClauses = clauses.filter((c) => c.includes(name));
+    if (nameClauses.length && nameClauses.every((c) => ABSTRACT_CONTEXT.test(c))) continue;
+    if (nameClauses.every((c) => new RegExp(`(?:面对|面向|朝向|朝着|望向|看向|盯向|冲着|对着)[^。；;，,]{0,4}${name}`).test(c))) continue;
+    if (SPEECH_STAGING.test(sentence)) return true;
+  }
+  return false;
+}
+
 const SHOT_SIZES = ["远景", "全景", "中景", "近景", "特写"] as const;
 /** 运镜词 → 规范类别:与提示词允许的缓慢运镜词表对齐;子串匹配容易误伤("推开门"),只认显式运镜表述 */
 const CAMERA_VERBS: [RegExp, string][] = [
@@ -146,8 +165,19 @@ export function validateStoryboard(data: unknown, count: number, dialoguePlan?: 
     if (want) {
       for (const line of want) {
         const sp = /^([^：:]+)[：:]/.exec(line.trim())?.[1]?.trim();
-        if (sp && !mentionedAsPresent(desc, sp)) {
-          issues.push(`第${n}镜分配表台词的说话人"${sp}"未在 description 中安排出场:必须写出其出场与说话动作,禁止台词由画面外/未描述的人说出`);
+        if (sp && !stagedWithAction(desc, sp)) {
+          issues.push(`第${n}镜分配表台词的说话人"${sp}"未在 description 中安排出场:必须写出其出场与说话动作(纯"面对XX""看向XX"不算),禁止台词由画面外/未描述的人说出`);
+        }
+      }
+      // J:台词镜人物先行——desc 前两句必须出现说话人,禁止连续纯环境/运镜句开场。
+      // 实测首镜 desc 前半全是环境(全息舱+光幕+落幅),模型照演成 40% 空镜再硬切人物,
+      // 两句台词被压进后 60% 且单镜内两次切镜
+      const speakers = want.map((l) => /^([^：:]+)[：:]/.exec(l.trim())?.[1]?.trim()).filter((sp): sp is string => Boolean(sp));
+      if (speakers.length) {
+        const early = desc.split(/[。；;]/).filter((x) => x.trim()).slice(0, 2)
+          .some((s) => speakers.some((sp) => stagedWithAction(s, sp) || s.includes(sp)));
+        if (!early) {
+          issues.push(`第${n}镜带台词却以纯环境/运镜句开场(前两句无说话人):人物必须出现在前两句内,环境描写并入人物句,禁止先拍空镜再切人物`);
         }
       }
     }
@@ -278,10 +308,11 @@ export function templateRepairStoryboard(data: unknown, dialoguePlan?: string[][
       desc = kept.join("");
       fixes.push(`第${n}镜 删除台词原文子句${clauses.length - kept.length}句`);
     }
-    // C':未实义出场的说话人追加模板句(在 H 删除之后判断,删除可能连带删掉原出场描写)
+    // C':未实义出场的说话人追加模板句(在 H 删除之后判断,删除可能连带删掉原出场描写;
+    // 检测口径与 C' 检查一致用 stagedWithAction,否则检查打回而修复认为已出场,梯子空转)
     for (const line of want) {
       const sp = /^([^：:]+)[：:]/.exec(line.trim())?.[1]?.trim();
-      if (sp && !mentionedAsPresent(desc, sp)) {
+      if (sp && !stagedWithAction(desc, sp)) {
         desc = `${desc.replace(/[。；;，,\s]+$/, "")},${sp}侧身入画,面向画面内对象开口说话。`;
         fixes.push(`第${n}镜 追加说话人出场:${sp}`);
       }
@@ -397,7 +428,7 @@ export async function POST(req: NextRequest) {
               console.warn(`[agent/plan] storyboard 代码修复:`, [...repairs, ...templateFixes].join(" | "));
             }
             const isCritical = (list: string[]) =>
-              list.filter((i) => i.includes("未在 description 中安排出场") || i.includes("引用了台词原文"));
+              list.filter((i) => i.includes("未在 description 中安排出场") || i.includes("引用了台词原文") || i.includes("前两句无说话人"));
             let remaining = validateStoryboard(data, parsed.count, parsed.dialoguePlan, parsed.indexOffset ?? 0);
             if (isCritical(remaining).length && Array.isArray(parsed.dialoguePlan)) {
               const container = data as { shots?: unknown[] };
