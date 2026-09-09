@@ -246,6 +246,83 @@ export function repairStoryboard(data: unknown, dialoguePlan?: string[][] | null
   return fixes;
 }
 
+/** 关键违规的代码模板修复(定向修复前的确定性兜底,C'/H/I 三类逐条可机械修复):
+ * I 背对镜头→侧对镜头(词面替换);H 引用台词→删除含台词片段的子句(子句已被台词污染,整句删);
+ * C' 说话人未安排出场→desc 末尾追加入画说话模板句(desc 是给视频模型的 prose,合式指令即有效)。
+ * 修复后必须重新过 validateStoryboard 复检,复检通过才放行——不中断不等于放水。
+ * 返回修复清单供日志审计 */
+export function templateRepairStoryboard(data: unknown, dialoguePlan?: string[][] | null, indexOffset = 0): string[] {
+  if (!Array.isArray(dialoguePlan)) return [];
+  const shots = (data as { shots?: { description?: string; dialogue?: string[]; characters?: string[] }[] })?.shots;
+  if (!Array.isArray(shots)) return [];
+  const fixes: string[] = [];
+  shots.forEach((s, i) => {
+    const want = dialoguePlan[i] ?? [];
+    const n = indexOffset + i + 1;
+    let desc = s.description ?? "";
+    if (!desc || want.length === 0) return;
+    const texts = want.map((l) => l.replace(/^[^：:]+[：:]/, "").trim()).filter(Boolean);
+    // I:背对→侧对(带台词镜与 speakerNote 口型要求冲突,侧对是保口型的安全折中)
+    if (/背(?:对|向|朝)镜头/.test(desc)) {
+      desc = desc.replace(/背对镜头/g, "侧对镜头").replace(/背向镜头/g, "侧对镜头").replace(/背朝镜头/g, "侧对镜头");
+      fixes.push(`第${n}镜 背对镜头→侧对镜头`);
+    }
+    // H:删除含台词片段的子句(保留分隔符切分,只删污染句,不伤运镜/落幅结构)
+    const clauses = desc.split(/(?<=[。；;，,])/);
+    const kept = clauses.filter((cl) => {
+      const quoted = [...cl.matchAll(/[「『"][^」』"]{2,}[」』"]/g)].map((m) => m[0].slice(1, -1));
+      if (quoted.some((q) => texts.some((t) => t.includes(q) || q.includes(t)))) return false;
+      return !texts.some((t) => t.length >= 6 && cl.includes(t));
+    });
+    if (kept.length < clauses.length) {
+      desc = kept.join("");
+      fixes.push(`第${n}镜 删除台词原文子句${clauses.length - kept.length}句`);
+    }
+    // C':未实义出场的说话人追加模板句(在 H 删除之后判断,删除可能连带删掉原出场描写)
+    for (const line of want) {
+      const sp = /^([^：:]+)[：:]/.exec(line.trim())?.[1]?.trim();
+      if (sp && !mentionedAsPresent(desc, sp)) {
+        desc = `${desc.replace(/[。；;，,\s]+$/, "")},${sp}侧身入画,面向画面内对象开口说话。`;
+        fixes.push(`第${n}镜 追加说话人出场:${sp}`);
+      }
+    }
+    s.description = desc;
+  });
+  return fixes;
+}
+
+/** 定向修复:模板修复仍不达标时,把完整分镜+违规清单送 storyboard-fix 修复师,只接受
+ * 被点名镜头的修复结果,其余镜头逐字保持原样——"整篇重写回归"(修 A 坏 B,实测借重试
+ * 把分配表 [3,3,3,3,3] 改成 [3,2,2,2,2])在结构上被排除。失败/超长/镜数不符返回 null */
+async function targetedStoryboardFix(
+  shots: unknown[],
+  dialoguePlan: string[][],
+  indexOffset: number,
+  issues: string[],
+): Promise<unknown[] | null> {
+  try {
+    const raw = await createAgnesChatCompletion({
+      messages: [
+        { role: "system", content: PLAN_SYSTEMS["storyboard-fix"] },
+        { role: "user", content: JSON.stringify({ shots, dialoguePlan, violations: issues }) },
+      ],
+      maxTokens: 8192,
+    });
+    const fixed = extractJson(raw) as { shots?: unknown[] };
+    const fixedShots = fixed?.shots;
+    if (!Array.isArray(fixedShots) || fixedShots.length !== shots.length) {
+      console.warn(`[agent/plan] storyboard 定向修复输出镜数不符(${Array.isArray(fixedShots) ? fixedShots.length : "n/a"}/${shots.length}),弃用`);
+      return null;
+    }
+    // 拼回:只有 violations 点名的镜号才取修复结果,未点名镜头保持原样
+    const named = new Set(issues.map((i) => /第(\d+)镜/.exec(i)?.[1]).filter(Boolean).map(Number));
+    return shots.map((s, i) => (named.has(indexOffset + i + 1) ? fixedShots[i] : s));
+  } catch (e) {
+    console.warn("[agent/plan] storyboard 定向修复调用失败:", (e as Error).message);
+    return null;
+  }
+}
+
 
 export async function POST(req: NextRequest) {
   try {
@@ -258,29 +335,49 @@ export async function POST(req: NextRequest) {
     const maxAttempts = ["storyboard", "outline", "outline-continue", "assets"].includes(task!) ? 3 : 2;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
+        // 大纲任务走 Best-of-N(并行候选),其余任务单发
+        if (task === "outline" || task === "outline-continue") {
+          // C: Best-of-N——大纲 token 便宜,每轮并行 3 候选,取首个零违规者;全违规则取违规
+          // 最少者进入重试/硬阻断梯,把语义类违规(句长)的失败率压在最便宜的阶段
+          const settled = await Promise.allSettled(
+            Array.from({ length: 3 }, () => createAgnesChatCompletion({
+              messages: [{ role: "system", content: system }, { role: "user", content: buildUser(task!, input, shotCount, secondsPerShot, retryIssues) }],
+              maxTokens: 8192,
+            })),
+          );
+          const raws = settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+          if (!raws.length) throw (settled[0] as PromiseRejectedResult).reason;
+          const candidates = raws.map((raw) => {
+            try {
+              const data = extractJson(raw);
+              return { data, issues: validateOutline(data, shotCount, secondsPerShot) };
+            } catch {
+              return { data: null as unknown, issues: ["输出 JSON 解析失败"] };
+            }
+          });
+          const clean = candidates.find((c) => c.issues.length === 0);
+          if (clean) return NextResponse.json({ ok: true, data: clean.data });
+          const best = candidates.reduce((a, b) => (b.issues.length < a.issues.length ? b : a));
+          if (!best.data) throw new Error("3 候选输出 JSON 解析均失败");
+          if (attempt < maxAttempts - 1) {
+            console.warn(`[agent/plan] ${task} 第${attempt + 1}轮3候选全违规(最少${best.issues.length}处),取最优带清单重试:`, best.issues.join(" | "));
+            retryIssues = best.issues;
+            continue;
+          }
+          // 句长违规硬阻断:超短句(1~8字)留静音空窗,视频模型用即兴语音填空——"台词乱说"的老根因
+          const badLen = best.issues.filter((i) => i.includes("每句台词必须9~20字"));
+          if (badLen.length) {
+            console.error(`[agent/plan] ${task} ${maxAttempts}轮×3候选后台词句长仍不达标${badLen.length}处,整批打回`);
+            return NextResponse.json({ error: `大纲台词句长合同未达标(重试${maxAttempts}轮×3候选):${badLen.join("；")}` }, { status: 502 });
+          }
+          return NextResponse.json(best.issues.length ? { ok: true, data: best.data, issues: best.issues } : { ok: true, data: best.data });
+        }
         const raw = await createAgnesChatCompletion({
           messages: [{ role: "system", content: system }, { role: "user", content: buildUser(task!, input, shotCount, secondsPerShot, retryIssues) }],
           maxTokens: 8192,
         });
         try {
           const data = extractJson(raw);
-          // 大纲输出做剧本硬合同校验(台词量/句长/说话人/幽灵亲属)
-          if (task === "outline" || task === "outline-continue") {
-            const issues = validateOutline(data, shotCount, secondsPerShot);
-            if (issues.length > 0 && attempt < maxAttempts - 1) {
-              console.warn(`[agent/plan] ${task} 第${attempt + 1}轮违规${issues.length}处,带清单重试:`, issues.join(" | "));
-              retryIssues = issues;
-              continue;
-            }
-            // 句长违规硬阻断:超短句(1~8字)4秒念不完留静音空窗,视频模型用即兴语音填空——
-            // "台词乱说"的老根因(实测 12 句里 5 句不足 9 字照常放行)。其余违规仍带 issues 放行
-            const badLen = issues.filter((i) => i.includes("每句台词必须9~20字"));
-            if (badLen.length) {
-              console.error(`[agent/plan] ${task} ${maxAttempts}轮重试后台词句长仍不达标${badLen.length}处,整批打回`);
-              return NextResponse.json({ error: `大纲台词句长合同未达标(重试${maxAttempts}轮):${badLen.join("；")}` }, { status: 502 });
-            }
-            return NextResponse.json(issues.length ? { ok: true, data, issues } : { ok: true, data });
-          }
           // 分镜输出做合同校验:违规不直接放行,带违规清单重试;最后一轮仍违规则代码修复后放行
           if (task === "storyboard") {
             const parsed = JSON.parse(input) as { count: number; dialoguePlan?: string[][] | null; indexOffset?: number };
@@ -290,19 +387,39 @@ export async function POST(req: NextRequest) {
               retryIssues = issues;
               continue;
             }
+            // 关键违规不放行:说话人未安排出场(C' desc 侧)与引用台词原文(H)带病放行即产出
+            // "画外音即兴乱说/对镜头说话"的缺陷视频(实测首批 17 处违规照常 ship)。修复梯子:
+            // 代码修复(repair+template)→复检 → 定向修复(只送违规镜头,2轮)→复检 → 才打回。
+            // 不中断≠放水:每步修复后都过同一把 validateStoryboard 复检,复检通过才继续
             const repairs = repairStoryboard(data, parsed.dialoguePlan, parsed.indexOffset ?? 0);
-            if (repairs.length) console.warn(`[agent/plan] storyboard 最终代码修复:`, repairs.join(" | "));
-            // 关键违规不放行:说话人未安排出场(C' desc 侧)与引用台词原文(H)无法代码修复,
-            // 带病放行即产出"画外音即兴乱说/对镜头说话"的缺陷视频(实测首批 17 处违规照常 ship)。
-            // 宁可整批报错让用户重试,也不 ship 违规分镜;其余非关键违规(景别/运镜等)仍放行
-            const critical = issues.filter(
-              (i) => i.includes("未在 description 中安排出场") || i.includes("引用了台词原文"),
-            );
-            if (critical.length) {
-              console.error(`[agent/plan] storyboard ${maxAttempts}轮重试后仍有关键违规${critical.length}处,整批打回:`, critical.join(" | "));
-              return NextResponse.json({ error: `分镜关键合同未达标(重试${maxAttempts}轮):${critical.join("；")}` }, { status: 502 });
+            const templateFixes = templateRepairStoryboard(data, parsed.dialoguePlan, parsed.indexOffset ?? 0);
+            if (repairs.length || templateFixes.length) {
+              console.warn(`[agent/plan] storyboard 代码修复:`, [...repairs, ...templateFixes].join(" | "));
             }
-            return NextResponse.json(issues.length ? { ok: true, data, issues } : { ok: true, data });
+            const isCritical = (list: string[]) =>
+              list.filter((i) => i.includes("未在 description 中安排出场") || i.includes("引用了台词原文"));
+            let remaining = validateStoryboard(data, parsed.count, parsed.dialoguePlan, parsed.indexOffset ?? 0);
+            if (isCritical(remaining).length && Array.isArray(parsed.dialoguePlan)) {
+              const container = data as { shots?: unknown[] };
+              for (let fixRound = 0; fixRound < 2; fixRound++) {
+                const spliced = await targetedStoryboardFix(
+                  container.shots ?? [], parsed.dialoguePlan, parsed.indexOffset ?? 0, remaining,
+                );
+                if (!spliced) break;
+                container.shots = spliced;
+                remaining = validateStoryboard(data, parsed.count, parsed.dialoguePlan, parsed.indexOffset ?? 0);
+                if (isCritical(remaining).length === 0) {
+                  console.warn(`[agent/plan] storyboard 第${fixRound + 1}轮定向修复后复检通过`);
+                  break;
+                }
+              }
+            }
+            const critical = isCritical(remaining);
+            if (critical.length) {
+              console.error(`[agent/plan] storyboard 修复梯子(${maxAttempts}轮重试+代码修复+定向修复)后仍有关键违规${critical.length}处,整批打回:`, critical.join(" | "));
+              return NextResponse.json({ error: `分镜关键合同未达标(已重试${maxAttempts}轮+代码/定向修复):${critical.join("；")}` }, { status: 502 });
+            }
+            return NextResponse.json(remaining.length ? { ok: true, data, issues: remaining } : { ok: true, data });
           }
           // 资产清单校验(B合同):大纲角色/场景逐字覆盖检查,缺则带清单重试
           if (task === "assets") {

@@ -43,7 +43,21 @@ async function plan<T>(task: string, input: string, shotCount?: number, secondsP
     body: JSON.stringify({ task, input, shotCount, secondsPerShot }),
   });
   const json = await res.json();
-  if (!res.ok) throw new Error(json.error || "规划失败");
+  if (!res.ok) {
+    const err = new Error(json.error || "规划失败");
+    // 瞬态错误(500/503/网关)自动重试一次;502 是合同硬阻断(修复梯子已尽力),重试只会
+    // 再烧 3 轮规划,把决策留给用户
+    if (res.status === 502) throw err;
+    console.warn(`[agent] ${task} 规划失败(${res.status}),自动重试一次:`, err.message);
+    const res2 = await fetch("/api/agent/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task, input, shotCount, secondsPerShot }),
+    });
+    const json2 = await res2.json();
+    if (!res2.ok) throw new Error(json2.error || "规划失败");
+    return json2.data as T;
+  }
   return json.data as T;
 }
 
