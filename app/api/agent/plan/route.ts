@@ -151,6 +151,23 @@ export function validateStoryboard(data: unknown, count: number, dialoguePlan?: 
         }
       }
     }
+    // H:description 禁止引用台词原文——引用台词会让 description 与运行时注入的说话提示
+    // 互相矛盾,且诱导模型把念白演成转脸/看字幕(实测第6镜 desc 写『清理者索尔』的名字落下,
+    // 与"嘴部可见禁止转向镜头"冲突,模型折中成对镜头说话)。台词只允许出现在 dialogue 数组
+    if (want?.length) {
+      const texts = want.map((l) => l.replace(/^[^：:]+[：:]/, "").trim()).filter(Boolean);
+      const quoted = [...desc.matchAll(/[「『"][^」』"]{2,}[」』"]/g)].map((m) => m[0].slice(1, -1));
+      const badQuote = quoted.find((q) => texts.some((t) => t.includes(q) || q.includes(t)));
+      const badBare = texts.find((t) => t.length >= 6 && desc.includes(t));
+      if (badQuote || badBare) {
+        issues.push(`第${n}镜 description 引用了台词原文"${badQuote ?? badBare}":台词只允许出现在 dialogue 数组,description 只写动作与神态(如"开口质问"),同一句台词绝不允许两处重复`);
+      }
+      // I:带台词镜禁止"背对镜头"调度——desc 写背对而 speakerNote 要求嘴部可见,两指令冲突时
+      // 模型折中成转正对镜头说话(实测第6镜)。说话人必须侧对或四分之三侧,保证口型可见
+      if (/背(?:对|向|朝)镜头/.test(desc)) {
+        issues.push(`第${n}镜带台词却安排"背对镜头":说话人必须侧对或四分之三侧朝向画面内对象,保证嘴部动作清晰可见,禁止背对镜头(与说话口型要求冲突,模型会折中成对镜头说话)`);
+      }
+    }
     // F':description 禁用 <Picture N> 占位符——运行时参考图按"本镜出镜角色"动态编号,
     // 与分镜师按大纲全局顺序写的编号必然错位(实测"<Picture 3>外星副官"实际指向场景图,
     // 提示词自相矛盾,模型即兴乱画);绑定由系统按角色名自动完成
@@ -255,6 +272,13 @@ export async function POST(req: NextRequest) {
               retryIssues = issues;
               continue;
             }
+            // 句长违规硬阻断:超短句(1~8字)4秒念不完留静音空窗,视频模型用即兴语音填空——
+            // "台词乱说"的老根因(实测 12 句里 5 句不足 9 字照常放行)。其余违规仍带 issues 放行
+            const badLen = issues.filter((i) => i.includes("每句台词必须9~20字"));
+            if (badLen.length) {
+              console.error(`[agent/plan] ${task} ${maxAttempts}轮重试后台词句长仍不达标${badLen.length}处,整批打回`);
+              return NextResponse.json({ error: `大纲台词句长合同未达标(重试${maxAttempts}轮):${badLen.join("；")}` }, { status: 502 });
+            }
             return NextResponse.json(issues.length ? { ok: true, data, issues } : { ok: true, data });
           }
           // 分镜输出做合同校验:违规不直接放行,带违规清单重试;最后一轮仍违规则代码修复后放行
@@ -268,6 +292,16 @@ export async function POST(req: NextRequest) {
             }
             const repairs = repairStoryboard(data, parsed.dialoguePlan, parsed.indexOffset ?? 0);
             if (repairs.length) console.warn(`[agent/plan] storyboard 最终代码修复:`, repairs.join(" | "));
+            // 关键违规不放行:说话人未安排出场(C' desc 侧)与引用台词原文(H)无法代码修复,
+            // 带病放行即产出"画外音即兴乱说/对镜头说话"的缺陷视频(实测首批 17 处违规照常 ship)。
+            // 宁可整批报错让用户重试,也不 ship 违规分镜;其余非关键违规(景别/运镜等)仍放行
+            const critical = issues.filter(
+              (i) => i.includes("未在 description 中安排出场") || i.includes("引用了台词原文"),
+            );
+            if (critical.length) {
+              console.error(`[agent/plan] storyboard ${maxAttempts}轮重试后仍有关键违规${critical.length}处,整批打回:`, critical.join(" | "));
+              return NextResponse.json({ error: `分镜关键合同未达标(重试${maxAttempts}轮):${critical.join("；")}` }, { status: 502 });
+            }
             return NextResponse.json(issues.length ? { ok: true, data, issues } : { ok: true, data });
           }
           // 资产清单校验(B合同):大纲角色/场景逐字覆盖检查,缺则带清单重试
