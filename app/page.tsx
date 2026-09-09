@@ -197,6 +197,7 @@ function CanvasPage() {
   }, [projectId, setGraph]);
 
   const [exportState, setExportState] = useState<{ status: string; progress?: string; output?: string; error?: string } | null>(null);
+  const [burnSubtitles, setBurnSubtitles] = useState(true);
   const startExport = useCallback(async () => {
     if (!projectId) return;
     setExportState({ status: "running" });
@@ -204,7 +205,7 @@ function CanvasPage() {
       const res = await fetch("/api/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId }),
+        body: JSON.stringify({ projectId, burnSubtitles }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "导出失败");
@@ -218,7 +219,7 @@ function CanvasPage() {
     } catch (error) {
       setExportState({ status: "failed", error: (error as Error).message });
     }
-  }, [projectId]);
+  }, [projectId, burnSubtitles]);
 
   if (!loaded) {
     return (
@@ -293,7 +294,7 @@ function CanvasPage() {
         )}
       </div>
 
-      <TimelinePanel onExport={() => void startExport()} />
+      <TimelinePanel onExport={() => void startExport()} burnSubtitles={burnSubtitles} onBurnSubtitlesChange={setBurnSubtitles} />
 
       {selectedNode && (
         <NodeConfigPanel node={selectedNode} onClose={() => deselectAll()} />

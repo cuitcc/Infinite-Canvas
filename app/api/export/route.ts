@@ -3,7 +3,8 @@ import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 import path from "node:path";
-import { getMediaById, getTimeline, EXPORT_DIR, newId, nowTs } from "@/lib/db";
+import { getMediaById, getTimeline, getNodeData, EXPORT_DIR, newId, nowTs } from "@/lib/db";
+import { buildSubtitleAss, parseDialogueLines, SUBTITLE_FONT_DIR } from "@/lib/subtitles";
 
 const execFileAsync = promisify(execFile);
 
@@ -31,7 +32,7 @@ const jobs = new Map<string, ExportJob>();
 
 export async function POST(req: NextRequest) {
   try {
-    const { projectId } = await req.json() as { projectId: string };
+    const { projectId, burnSubtitles } = await req.json() as { projectId: string; burnSubtitles?: boolean };
     const clips = getTimeline(projectId);
     if (clips.length === 0) {
       return NextResponse.json({ error: "时间线为空,请先添加视频片段" }, { status: 400 });
@@ -46,7 +47,7 @@ export async function POST(req: NextRequest) {
     const job: ExportJob = { id: jobId, status: "running", progress: "准备中", createdAt: nowTs() };
     jobs.set(jobId, job);
 
-    void runExport(job, clips, mediaRecords);
+    void runExport(job, clips, mediaRecords, burnSubtitles !== false);
 
     return NextResponse.json({ ok: true, jobId });
   } catch (error) {
@@ -54,7 +55,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function runExport(job: ExportJob, clips: Array<{ trimIn: number; trimOut: number | null; audioMediaId?: string }>, media: Array<{ id: string; localPath?: string; mimeType?: string }>) {
+async function runExport(job: ExportJob, clips: Array<{ trimIn: number; trimOut: number | null; audioMediaId?: string; nodeId: string }>, media: Array<{ id: string; localPath?: string; mimeType?: string }>, burnSubtitles: boolean) {
   const ffmpeg = resolveFfmpeg();
   const workDir = path.join(EXPORT_DIR, job.id);
   mkdirSync(workDir, { recursive: true });
@@ -72,6 +73,21 @@ async function runExport(job: ExportJob, clips: Array<{ trimIn: number; trimOut:
       const audioRecord = audioMediaId ? getMediaById(audioMediaId) : undefined;
       const hasAudio = Boolean(audioRecord?.localPath);
 
+      // 烧录字幕:台词来自视频节点 data.dialogue(=分镜分配表逐字合同,即实际生成的人声)。
+      // 行内时序按字数比例近似(模型直生人声无时间戳);输出侧 -ss 时间戳从 0 起,offset 传 0
+      let subtitleFilter: string | null = null;
+      if (burnSubtitles) {
+        const nodeData = getNodeData(clips[i].nodeId);
+        const lines = parseDialogueLines(nodeData?.dialogue as string | undefined);
+        const trimmed = trimOut != null && trimOut > trimIn;
+        const effDuration = trimmed ? trimOut! - trimIn : Number(nodeData?.seconds) || 0;
+        if (lines.length && effDuration > 0.5) {
+          const assFile = path.join(workDir, `sub-${String(i).padStart(3, "0")}.ass`);
+          writeFileSync(assFile, buildSubtitleAss(lines, effDuration, 0));
+          subtitleFilter = `subtitles=${assFile}:fontsdir=${SUBTITLE_FONT_DIR}`;
+        }
+      }
+
       const args: string[] = ["-y", "-i", src];
       if (hasAudio) {
         args.push("-i", path.join(process.cwd(), audioRecord!.localPath!));
@@ -81,8 +97,11 @@ async function runExport(job: ExportJob, clips: Array<{ trimIn: number; trimOut:
       if (hasAudio) {
         args.push("-shortest", "-map", "0:v:0", "-map", "1:a:0");
       }
+      const vf = subtitleFilter
+        ? `scale=1152:768:force_original_aspect_ratio=decrease,pad=1152:768:(ow-iw)/2:(oh-ih)/2,${subtitleFilter}`
+        : "scale=1152:768:force_original_aspect_ratio=decrease,pad=1152:768:(ow-iw)/2:(oh-ih)/2";
       args.push(
-        "-vf", "scale=1152:768:force_original_aspect_ratio=decrease,pad=1152:768:(ow-iw)/2:(oh-ih)/2",
+        "-vf", vf,
         "-r", "24",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
         "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",

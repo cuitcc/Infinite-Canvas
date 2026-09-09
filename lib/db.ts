@@ -363,6 +363,12 @@ export function updateNodeData(nodeId: string, dataPatch: Record<string, unknown
   db.prepare("UPDATE nodes SET data = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(merged), nowTs(), nodeId);
 }
 
+/** 导出侧按 id 取节点数据(字幕烧录读 video 节点的 dialogue/seconds) */
+export function getNodeData(nodeId: string): Record<string, unknown> | null {
+  const row = getDb().prepare("SELECT data FROM nodes WHERE id = ?").get(nodeId) as { data: string } | undefined;
+  return row ? JSON.parse(row.data) as Record<string, unknown> : null;
+}
+
 // ==================== 流水线快照（画布流水线库） ====================
 
 export interface PipelineSnapshotMeta {

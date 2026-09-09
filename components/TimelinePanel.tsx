@@ -10,7 +10,7 @@ function fmt(t: number) {
   return `${m}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
 }
 
-export function TimelinePanel({ onExport }: { onExport?: () => void }) {
+export function TimelinePanel({ onExport, burnSubtitles = true, onBurnSubtitlesChange }: { onExport?: () => void; burnSubtitles?: boolean; onBurnSubtitlesChange?: (v: boolean) => void }) {
   const nodes = useCanvasStore((s) => s.nodes);
   const timeline = useCanvasStore((s) => s.timeline);
   const setTimeline = useCanvasStore((s) => s.setTimeline);
@@ -92,9 +92,20 @@ export function TimelinePanel({ onExport }: { onExport?: () => void }) {
         </button>
         <span className="text-[10px] text-slate-400">{clips.length} 个片段</span>
         {onExport && (
-          <button onClick={onExport} className="ml-auto rounded-md bg-emerald-500 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-emerald-600">
-            导出成片
-          </button>
+          <div className="ml-auto flex items-center gap-3">
+            <label className="flex cursor-pointer items-center gap-1 text-[11px] text-slate-600">
+              <input
+                type="checkbox"
+                checked={burnSubtitles}
+                onChange={(e) => onBurnSubtitlesChange?.(e.target.checked)}
+                className="accent-emerald-500"
+              />
+              烧录台词字幕
+            </label>
+            <button onClick={onExport} className="rounded-md bg-emerald-500 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-emerald-600">
+              导出成片
+            </button>
+          </div>
         )}
       </div>
 
