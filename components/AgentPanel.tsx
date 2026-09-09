@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useCanvasStore, type AgentStage } from "@/lib/store";
 import { STYLE_LIBRARY, STYLE_CATEGORIES, type StyleEntry } from "@/lib/style-library";
-import { runAgent, chooseStyle, abortAgent, continueAgent } from "@/lib/agent-orchestrator";
+import { runAgent, chooseStyle, abortAgent, continueAgent, extendAgent } from "@/lib/agent-orchestrator";
 import { remainingScriptLines } from "@/lib/dialogue-plan";
 import { AGNES_VIDEO_SECONDS } from "@/lib/agnes-video";
 
@@ -339,7 +339,7 @@ export function AgentPanel({ onClose }: Props) {
             <p className="text-sm font-medium text-emerald-600">已填入时间线</p>
             <p className="text-xs text-slate-500">打开底部时间线，点「导出」生成成片</p>
             {(() => {
-              // 续拍入口:剧本台词超出已拍容量时,可继续制作下一批(复用资产,镜号续接)
+              // 续拍入口:剧本台词超出已拍容量时可继续制作下一批;剧本拍完也可续写新剧情接着做
               const oj = agentState?.outlineJson;
               if (!oj) return null;
               const remaining = remainingScriptLines(
@@ -348,15 +348,24 @@ export function AgentPanel({ onClose }: Props) {
                 agentState!.shotCount,
                 Number(agentState!.shotSeconds) || 10,
               );
-              if (!remaining.length) return null;
               return (
                 <>
-                  <p className="text-xs text-amber-600">剧本还有 {remaining.length} 句台词未拍完</p>
+                  {remaining.length > 0 && (
+                    <p className="text-xs text-amber-600">剧本还有 {remaining.length} 句台词未拍完</p>
+                  )}
+                  {remaining.length > 0 ? (
+                    <button
+                      onClick={() => void continueAgent()}
+                      className="rounded-md bg-violet-500 px-4 py-2 text-sm font-medium text-white hover:bg-violet-600"
+                    >
+                      ▶ 继续制作下一批
+                    </button>
+                  ) : null}
                   <button
-                    onClick={() => void continueAgent()}
-                    className="rounded-md bg-violet-500 px-4 py-2 text-sm font-medium text-white hover:bg-violet-600"
+                    onClick={() => void extendAgent()}
+                    className="rounded-md border border-violet-300 bg-white px-4 py-2 text-sm font-medium text-violet-600 hover:bg-violet-50"
                   >
-                    ▶ 继续制作下一批
+                    ✍ 续写新剧情接着拍
                   </button>
                 </>
               );

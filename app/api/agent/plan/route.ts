@@ -23,7 +23,7 @@ function buildUser(task: string, input: string, shotCount?: number, secondsPerSh
     return `分镜数量:${count}\n每镜秒数:${secondsPerShot ?? "10"}${planText}${continueText}\n剧本大纲:\n${JSON.stringify(outline)}\n可用角色:${assetNames.join("、")}${scenes}${retry}`;
   }
   // shotCount:outline 分支注入片长容量;storyboard 分支的 count 从 input 内部解析
-  if (task === "outline" && shotCount && secondsPerShot) {
+  if ((task === "outline" || task === "outline-continue") && shotCount && secondsPerShot) {
     const retry = retryIssues?.length ? `\n\n你上一次的输出存在以下违规,本次必须全部修正:\n${retryIssues.map((s, i) => `${i + 1}.${s}`).join("\n")}` : "";
     return `${input}\n(全片共${shotCount}个分镜,每镜${secondsPerShot}秒,全片约${Number(shotCount) * Number(secondsPerShot)}秒)${retry}`;
   }
@@ -183,7 +183,7 @@ export async function POST(req: NextRequest) {
     let lastErr: Error | null = null;
     let retryIssues: string[] | undefined;
     // 分镜/大纲给 3 次机会:实测 2 次时 LLM 会借最后一次重试整篇重写、私自改台词(台词合同由 repairStoryboard 代码兜底)
-    const maxAttempts = task === "storyboard" || task === "outline" ? 3 : 2;
+    const maxAttempts = task === "storyboard" || task === "outline" || task === "outline-continue" ? 3 : 2;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         const raw = await createAgnesChatCompletion({
@@ -193,10 +193,10 @@ export async function POST(req: NextRequest) {
         try {
           const data = extractJson(raw);
           // 大纲输出做剧本硬合同校验(台词量/句长/说话人/幽灵亲属)
-          if (task === "outline") {
+          if (task === "outline" || task === "outline-continue") {
             const issues = validateOutline(data, shotCount, secondsPerShot);
             if (issues.length > 0 && attempt < maxAttempts - 1) {
-              console.warn(`[agent/plan] outline 第${attempt + 1}轮违规${issues.length}处,带清单重试:`, issues.join(" | "));
+              console.warn(`[agent/plan] ${task} 第${attempt + 1}轮违规${issues.length}处,带清单重试:`, issues.join(" | "));
               retryIssues = issues;
               continue;
             }

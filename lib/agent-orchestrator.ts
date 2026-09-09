@@ -247,24 +247,7 @@ export async function chooseStyle(styleName: string, stylePrompt: string) {
     }));
     patch({ assets: assetList });
 
-    for (let i = 0; i < assetList.length; i++) {
-      if (aborted) return;
-      const a = assetList[i];
-      const kindLabel =
-        a.kind === "character" ? "角色" : a.kind === "scene" ? "场景" : "道具";
-      const nodeId = addAgentNode("image", { x: 400, y: i * 320 }, {
-        label: `${kindLabel}-${a.name}`,
-        prompt: `${stylePrompt},${a.prompt}`,
-        imageTier: "2K", // 参考图无需 4K:减小图片体积,避免多张 4K 大图把页面卡住
-      });
-      connect(s0.outlineNodeId!, nodeId);
-      // 原地更新当前项后再写 store:若从旧数组重建,nodeId 会被下一轮 patch 抹掉,导致分镜阶段筛不到参考图
-      assetList[i] = { ...assetList[i], nodeId, status: "running" };
-      patch({ assets: [...assetList] });
-      const ok = await generateAndAwait(nodeId);
-      assetList[i] = { ...assetList[i], status: ok ? "done" : "failed" };
-      patch({ assets: [...assetList] });
-    }
+    await generateAssetBatch(assetList, stylePrompt, []);
 
     await runStoryboardAndShots(stylePrompt);
   } catch (e) {
@@ -351,6 +334,31 @@ function clipsOf(shots: AgentShot[], nodes: { id: string; data: CanvasNodeData }
     .filter((c) => c.mediaId);
 }
 
+
+/** 生成一批资产图(模式A差量与首拍共用)。start 是 store 中本批之前的资产(batch 只含新增项);
+ * batch 原地更新 status 后与 start 一起写回, nodeId 落位在已有资产之后避免画布重叠 */
+async function generateAssetBatch(batch: AgentAsset[], stylePrompt: string, start: AgentAsset[]) {
+  const s = useCanvasStore.getState().agentState!;
+  for (let i = 0; i < batch.length; i++) {
+    if (aborted) return;
+    const a = batch[i];
+    const kindLabel =
+      a.kind === "character" ? "角色" : a.kind === "scene" ? "场景" : "道具";
+    const nodeId = addAgentNode("image", { x: 400, y: (start.length + i) * 320 }, {
+      label: `${kindLabel}-${a.name}`,
+      prompt: `${stylePrompt},${a.prompt}`,
+      imageTier: "2K", // 参考图无需 4K:减小图片体积,避免多张 4K 大图把页面卡住
+    });
+    if (s.outlineNodeId) connect(s.outlineNodeId, nodeId);
+    // 原地更新当前项后再写 store:若从旧数组重建,nodeId 会被下一轮 patch 抹掉,导致分镜阶段筛不到参考图
+    batch[i] = { ...batch[i], nodeId, status: "running" };
+    patch({ assets: [...start, ...batch] });
+    const ok = await generateAndAwait(nodeId);
+    batch[i] = { ...batch[i], status: ok ? "done" : "failed" };
+    patch({ assets: [...start, ...batch] });
+  }
+}
+
 /** 模式A·继续制作:剧本台词超出已拍分镜容量时,复用大纲/风格/已完成的资产,把剩余台词装进新一批分镜。
  * 镜号续接、首镜跨批衔接上批末镜尾帧(同场景时)、时间线只追加新批片段;每批分镜数沿用 shotCount,
  * 拍完回到 done 可再次继续,直到剩余台词耗尽(面板按钮随之隐藏)。 */
@@ -364,15 +372,91 @@ export async function continueAgent() {
     patch({ stage: "done", error: "剧本台词已全部拍完,没有可续拍的内容" });
     return;
   }
+  const remaining = remainingScriptLines(s0.outlineJson.script, names, s0.shotCount, seconds);
+  if (!remaining.length) {
+    patch({ stage: "done", error: "剧本台词已全部拍完,没有可续拍的内容" });
+    return;
+  }
+  await shootNextBatch();
+}
+
+
+/** 模式B·续写新剧情:LLM 接着前情写下一段剧本(可引入新角色/新场景)→ 差量生成新增资产 →
+ * 与模式A共用「拍下一批」管线。新剧本段直接 merge 进 outlineJson 末尾,剩余量/台词分配/
+ * 校验/装配全部无感复用——旧剧本未拍完的台词仍会先被装入,剧情顺序天然正确。 */
+export async function extendAgent() {
+  const s0 = useCanvasStore.getState().agentState;
+  if (!s0?.outlineJson || !s0.outlineNodeId || s0.stage !== "done") return;
+  aborted = false;
+  patch({ stage: "outline", error: null });
+  try {
+    // 前情提要带台词,续写 LLM 才能接准故事进度(画面摘要+本镜台词)
+    const prevShots = s0.shots.map((sh) => ({
+      index: sh.index,
+      scene: sh.scene,
+      summary: sh.description.slice(0, 80),
+      dialogue: sh.dialogue,
+    }));
+    const seg = await plan<Outline>(
+      "outline-continue",
+      JSON.stringify({ outline: s0.outlineJson, prevShots }),
+      s0.shotCount,
+      s0.shotSeconds,
+    );
+    if (aborted) return;
+    // merge:沿用角色/场景去重(照抄原名),新角色/新场景追加;剧本段追加在末尾
+    const base = s0.outlineJson;
+    const merged = {
+      ...base,
+      characters: [...base.characters, ...seg.characters.filter((c) => !base.characters.some((o) => o.name === c.name))],
+      scenes: [...base.scenes, ...seg.scenes.filter((sc) => !base.scenes.some((o) => o.name === sc.name))],
+      script: `${base.script}\n${seg.script}`,
+    };
+    // 大纲文本节点追加新段,画布可见可编辑
+    useCanvasStore.getState().updateNodeData(s0.outlineNodeId, {
+      prompt: `${outlineToText(base)}\n\n【续】${seg.script}`,
+    });
+    patch({ outlineJson: merged, stage: "assets" });
+
+    // 差量资产:按合并后大纲重列资产清单,只生成 store 里还没有的(kind+name 去重)
+    const { assets } = await plan<{ assets: OutlineAsset[] }>("assets", JSON.stringify(merged));
+    if (aborted) return;
+    const existing = new Set(s0.assets.map((a) => `${a.kind}:${a.name}`));
+    const fresh = assets.filter((a) => !existing.has(`${a.kind}:${a.name}`));
+    const batch: AgentAsset[] = fresh.map((a, i) => ({
+      id: `x${s0.assets.length + i}`,
+      kind: a.kind,
+      name: a.name,
+      prompt: a.prompt,
+      nodeId: null,
+      status: "pending",
+    }));
+    patch({ assets: [...s0.assets, ...batch] });
+    await generateAssetBatch(batch, s0.stylePrompt, s0.assets);
+
+    await shootNextBatch();
+  } catch (e) {
+    patch({ stage: "done", error: (e as Error).message });
+  }
+}
+
+/** 拍摄下一批:分镜续拍计划 → 分镜视频生成 → 时间线追加。模式A(继续制作)与模式B(续写后继续)共用;
+ * 前置条件:outlineJson 存在(调用方负责守卫与剩余量检查) */
+async function shootNextBatch() {
+  const s0 = useCanvasStore.getState().agentState!;
   patch({ stage: "storyboard", error: null });
   try {
     const outlineNode = useCanvasStore.getState().nodes.find((n) => n.id === s0.outlineNodeId);
     const assetNames = s0.assets.filter((a) => a.kind === "character").map((a) => a.name);
     const sceneNames = s0.assets.filter((a) => a.kind === "scene").map((a) => a.name);
     // 跳过已消耗的前缀句数(与首拍同一分配管线,口径一致)
-    const dialoguePlan = planShotDialogue(
-      s0.outlineJson.script, names, s0.shotCount, seconds, scriptCapacity(s0.shotCount, seconds),
-    );
+    const dialoguePlan = s0.outlineJson
+      ? planShotDialogue(
+          s0.outlineJson.script,
+          s0.outlineJson.characters.map((c) => c.name),
+          s0.shotCount, Number(s0.shotSeconds) || 10, scriptCapacity(s0.shotCount, Number(s0.shotSeconds) || 10),
+        )
+      : null;
     const indexOffset = s0.shots.length;
     const prevShots = s0.shots.map((sh) => ({
       index: sh.index, scene: sh.scene, summary: sh.description.slice(0, 80),
