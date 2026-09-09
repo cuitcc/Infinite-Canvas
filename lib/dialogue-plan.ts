@@ -138,12 +138,9 @@ export function auditScript(script: string, characterNames: string[], minLines: 
   return issues;
 }
 
-export function planShotDialogue(
-  script: string,
-  characterNames: string[],
-  shotCount: number,
-  secondsPerShot: number,
-): string[][] {
+/** 剧本台词行选择(严格过滤 + 兜底降级),planShotDialogue 与剩余量统计共用同一管线,
+ * 保证「已消耗句数」的口径一致 */
+function selectScriptLines(script: string, characterNames: string[]): ScriptLine[] {
   const all = extractDialogue(script, new Set(characterNames));
   // 兜底:严格过滤误杀(0句,或只剩单一说话人——对白剧至少两个角色攻防)时,
   // 降级为不过滤说话人,只排除元信息行
@@ -153,14 +150,38 @@ export function planShotDialogue(
     const loose = extractDialogue(script, null);
     if (loose.length > lines.length) lines = loose;
   }
+  return lines;
+}
+
+export function planShotDialogue(
+  script: string,
+  characterNames: string[],
+  shotCount: number,
+  secondsPerShot: number,
+  skipLines = 0,
+): string[][] {
+  const lines = selectScriptLines(script, characterNames);
 
   const perShot = shotLineCap(secondsPerShot);
 
   const plan: string[][] = [];
-  let idx = 0;
+  let idx = skipLines; // 续拍批次从已消耗句数起分配(前缀语义跨批推进)
   for (let i = 0; i < shotCount; i++) {
     plan.push(lines.slice(idx, idx + perShot).map((l) => `${l.speaker}：${l.text}`));
     idx += perShot;
   }
   return plan; // 超出总容量的台词自然舍弃
+}
+
+/** 剧本中尚未装入分镜的剩余台词(已消耗量=单批容量,与 planShotDialogue 同口径)。
+ * 供「继续制作」入口判断与展示:空数组=剧本已全部拍完 */
+export function remainingScriptLines(
+  script: string,
+  characterNames: string[],
+  shotCount: number,
+  secondsPerShot: number,
+): string[] {
+  const lines = selectScriptLines(script, characterNames);
+  const consumed = Math.min(lines.length, scriptCapacity(shotCount, secondsPerShot));
+  return lines.slice(consumed).map((l) => `${l.speaker}：${l.text}`);
 }

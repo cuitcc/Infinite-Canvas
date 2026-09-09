@@ -1,7 +1,7 @@
 "use client";
 
 import { useCanvasStore, type AgentAsset, type AgentShot, type CanvasNodeData } from "./store";
-import { planShotDialogue } from "./dialogue-plan";
+import { planShotDialogue, remainingScriptLines, scriptCapacity } from "./dialogue-plan";
 
 // ==================== 类型定义 ====================
 
@@ -319,6 +319,117 @@ async function runStoryboardAndShots(stylePrompt: string) {
   }));
   patch({ shots, stage: "shots" });
 
+  await runShotBatch(shots, stylePrompt, null, []);
+
+  // ---- assembly：按序填时间线（仅成功的镜） ----
+  if (aborted) return;
+  patch({ stage: "assembly" });
+
+  const stNow = useCanvasStore.getState();
+  const clips = clipsOf(shots, stNow.nodes, stNow.timeline.length);
+
+  stNow.setTimeline([...stNow.timeline, ...clips]);
+  patch({ stage: "done" });
+}
+
+
+/** 成功镜 → 时间线片段。orderBase 接着时间线现有长度编序,续拍批次不会与旧片段乱序 */
+function clipsOf(shots: AgentShot[], nodes: { id: string; data: CanvasNodeData }[], orderBase: number) {
+  return shots
+    .filter((sh) => sh.status === "done" && sh.nodeId)
+    .map((sh, i) => {
+      const node = nodes.find((n) => n.id === sh.nodeId);
+      return {
+        id: agentNodeId("clip"),
+        nodeId: sh.nodeId!,
+        mediaId: node?.data.mediaId ?? "",
+        order: orderBase + i,
+        trimIn: 0,
+        trimOut: null,
+      };
+    })
+    .filter((c) => c.mediaId);
+}
+
+/** 模式A·继续制作:剧本台词超出已拍分镜容量时,复用大纲/风格/已完成的资产,把剩余台词装进新一批分镜。
+ * 镜号续接、首镜跨批衔接上批末镜尾帧(同场景时)、时间线只追加新批片段;每批分镜数沿用 shotCount,
+ * 拍完回到 done 可再次继续,直到剩余台词耗尽(面板按钮随之隐藏)。 */
+export async function continueAgent() {
+  const s0 = useCanvasStore.getState().agentState;
+  if (!s0?.outlineJson || s0.stage !== "done") return;
+  aborted = false;
+  const seconds = Number(s0.shotSeconds) || 10;
+  const names = s0.outlineJson.characters.map((c) => c.name);
+  if (!remainingScriptLines(s0.outlineJson.script, names, s0.shotCount, seconds).length) {
+    patch({ stage: "done", error: "剧本台词已全部拍完,没有可续拍的内容" });
+    return;
+  }
+  patch({ stage: "storyboard", error: null });
+  try {
+    const outlineNode = useCanvasStore.getState().nodes.find((n) => n.id === s0.outlineNodeId);
+    const assetNames = s0.assets.filter((a) => a.kind === "character").map((a) => a.name);
+    const sceneNames = s0.assets.filter((a) => a.kind === "scene").map((a) => a.name);
+    // 跳过已消耗的前缀句数(与首拍同一分配管线,口径一致)
+    const dialoguePlan = planShotDialogue(
+      s0.outlineJson.script, names, s0.shotCount, seconds, scriptCapacity(s0.shotCount, seconds),
+    );
+    const indexOffset = s0.shots.length;
+    const prevShots = s0.shots.map((sh) => ({
+      index: sh.index, scene: sh.scene, summary: sh.description.slice(0, 80),
+    }));
+    const shotsPlan = await plan<Storyboard>(
+      "storyboard",
+      JSON.stringify({
+        outline: outlineNode?.data.prompt,
+        assetNames,
+        sceneNames,
+        count: s0.shotCount,
+        secondsPerShot: s0.shotSeconds,
+        dialoguePlan,
+        indexOffset,
+        prevShots,
+      }),
+      s0.shotCount,
+    );
+    if (aborted) return;
+    const batch: AgentShot[] = shotsPlan.shots.map((sh, i) => ({
+      index: indexOffset + i + 1, // 镜号代码续接,不信任 LLM 编号
+      description: sh.description,
+      // 分配表存在时强制覆盖(与首拍一致)
+      dialogue: dialoguePlan ? (dialoguePlan[i] ?? []) : (sh.dialogue ?? []),
+      characters: sh.characters ?? [],
+      scene: sh.scene ?? "",
+      nodeId: null,
+      status: "pending",
+    }));
+    patch({ shots: [...s0.shots, ...batch], stage: "shots" });
+
+    // 跨批尾帧衔接:上批最后成功镜的尾帧节点;换场景则不衔接(与批内规则一致)
+    let initialTail: { nodeId: string; url: string } | null = null;
+    const lastDone = [...s0.shots].reverse().find((sh) => sh.status === "done" && sh.nodeId);
+    const tailNode = lastDone
+      ? useCanvasStore.getState().nodes.find((n) => n.data.label === `第${lastDone.index}镜尾帧`)
+      : undefined;
+    if (lastDone && tailNode && batch[0].scene && lastDone.scene && batch[0].scene === lastDone.scene) {
+      initialTail = { nodeId: tailNode.id, url: (tailNode.data as { remoteUrl?: string }).remoteUrl ?? "" };
+    }
+    await runShotBatch(batch, s0.stylePrompt, initialTail, s0.shots);
+    if (aborted) return;
+
+    // 增量装配:只把新批成功镜追加到时间线
+    patch({ stage: "assembly" });
+    const stNow = useCanvasStore.getState();
+    const clips = clipsOf(batch, stNow.nodes, stNow.timeline.length);
+    stNow.setTimeline([...stNow.timeline, ...clips]);
+    patch({ stage: "done" });
+  } catch (e) {
+    patch({ stage: "done", error: (e as Error).message });
+  }
+}
+
+/** 生成一批分镜视频:参考图组装→台词注入→视频生成→尾帧截取。prefix 是 agentState.shots 中本批之前的镜(仅用于 patch 写回完整数组);initialTail 为跨批尾帧衔接(续拍批从上批末镜尾帧起步)。 */
+async function runShotBatch(batch: AgentShot[], stylePrompt: string, initialTail: { nodeId: string; url: string } | null, prefix: AgentShot[]) {
+  const s = useCanvasStore.getState().agentState!;
   // 角色名 → 节点 id 映射（仅已成功生成的角色立绘）
   const charNodes = new Map<string, string>();
   for (const a of s.assets) {
@@ -337,11 +448,11 @@ async function runStoryboardAndShots(stylePrompt: string) {
   }
 
   // 上一镜尾帧衔接:{ nodeId, url } | null;截帧失败、上一镜跳过或下一镜换场景时为 null(仅同场景镜衔接)
-  let prevTail: { nodeId: string; url: string } | null = null;
+  let prevTail: { nodeId: string; url: string } | null = initialTail;
 
-  for (let i = 0; i < shots.length; i++) {
+  for (let i = 0; i < batch.length; i++) {
     if (aborted) return;
-    const shot = shots[i];
+    const shot = batch[i];
 
     // 参考图顺序:角色立绘按大纲角色全局顺序(与分镜描述"<Picture N>"编号规则一致,避免 description 与 identityNote 编号打架)
     // → 出镜道具 → 场景图 → 上一镜尾帧(最后一张);
@@ -447,18 +558,18 @@ async function runStoryboardAndShots(stylePrompt: string) {
     for (const src of refIds) connect(src, nodeId);
 
     // 同 assets 循环:原地更新,避免下一轮 patch 抹掉 nodeId(否则 assembly 装不进时间线)
-    shots[i] = { ...shots[i], nodeId, status: "running" };
-    patch({ shots: [...shots] });
+    batch[i] = { ...batch[i], nodeId, status: "running" };
+    patch({ shots: [...prefix, ...batch] });
 
     const ok = await generateAndAwait(nodeId);
     // 单镜失败跳过不阻塞，标记为 skipped
-    shots[i] = { ...shots[i], status: ok ? "done" : "skipped" };
-    patch({ shots: [...shots] });
+    batch[i] = { ...batch[i], status: ok ? "done" : "skipped" };
+    patch({ shots: [...prefix, ...batch] });
 
     // 生成成功则截取尾帧供下一镜衔接;失败或下一镜换了场景则清空——
     // 场景切换镜喂上一镜尾帧反而误导模型(场景都变了还要求从旧画面起播),衔接只服务同场景镜头
-    const nextScene = shots[i + 1]?.scene;
-    if (!ok || i + 1 >= shots.length || aborted || (!!nextScene && !!shot.scene && nextScene !== shot.scene)) {
+    const nextScene = batch[i + 1]?.scene;
+    if (!ok || i + 1 >= batch.length || aborted || (!!nextScene && !!shot.scene && nextScene !== shot.scene)) {
       prevTail = null;
       continue;
     }
@@ -477,29 +588,6 @@ async function runStoryboardAndShots(stylePrompt: string) {
       prevTail = null;
     }
   }
-
-  // ---- assembly：按序填时间线（仅成功的镜） ----
-  if (aborted) return;
-  patch({ stage: "assembly" });
-
-  const stNow = useCanvasStore.getState();
-  const clips = stNow
-    .agentState!.shots.filter((sh) => sh.status === "done" && sh.nodeId)
-    .map((sh, i) => {
-      const node = stNow.nodes.find((n) => n.id === sh.nodeId);
-      return {
-        id: agentNodeId("clip"),
-        nodeId: sh.nodeId!,
-        mediaId: node?.data.mediaId ?? "",
-        order: i,
-        trimIn: 0,
-        trimOut: null,
-      };
-    })
-    .filter((c) => c.mediaId);
-
-  stNow.setTimeline([...stNow.timeline, ...clips]);
-  patch({ stage: "done" });
 }
 
 // ==================== 辅助 ====================

@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useCanvasStore, type AgentStage } from "@/lib/store";
 import { STYLE_LIBRARY, STYLE_CATEGORIES, type StyleEntry } from "@/lib/style-library";
-import { runAgent, chooseStyle, abortAgent } from "@/lib/agent-orchestrator";
+import { runAgent, chooseStyle, abortAgent, continueAgent } from "@/lib/agent-orchestrator";
+import { remainingScriptLines } from "@/lib/dialogue-plan";
 import { AGNES_VIDEO_SECONDS } from "@/lib/agnes-video";
 
 // 六个阶段的顺序与标签
@@ -337,6 +338,30 @@ export function AgentPanel({ onClose }: Props) {
             <span className="text-4xl">✅</span>
             <p className="text-sm font-medium text-emerald-600">已填入时间线</p>
             <p className="text-xs text-slate-500">打开底部时间线，点「导出」生成成片</p>
+            {(() => {
+              // 续拍入口:剧本台词超出已拍容量时,可继续制作下一批(复用资产,镜号续接)
+              const oj = agentState?.outlineJson;
+              if (!oj) return null;
+              const remaining = remainingScriptLines(
+                oj.script,
+                oj.characters.map((c) => c.name),
+                agentState!.shotCount,
+                Number(agentState!.shotSeconds) || 10,
+              );
+              if (!remaining.length) return null;
+              return (
+                <>
+                  <p className="text-xs text-amber-600">剧本还有 {remaining.length} 句台词未拍完</p>
+                  <button
+                    onClick={() => void continueAgent()}
+                    className="rounded-md bg-violet-500 px-4 py-2 text-sm font-medium text-white hover:bg-violet-600"
+                  >
+                    ▶ 继续制作下一批
+                  </button>
+                </>
+              );
+            })()}
+            {error && <p className="text-xs text-rose-500">⚠ {error}</p>}
           </div>
         )}
 

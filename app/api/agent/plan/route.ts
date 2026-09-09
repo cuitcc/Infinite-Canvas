@@ -5,17 +5,22 @@ import { auditScript, minScriptLines, scriptCapacity } from "@/lib/dialogue-plan
 
 function buildUser(task: string, input: string, shotCount?: number, secondsPerShot?: string, retryIssues?: string[]): string {
   if (task === "storyboard") {
-    const { outline, assetNames, sceneNames, count, dialoguePlan } = JSON.parse(input) as {
+    const { outline, assetNames, sceneNames, count, dialoguePlan, indexOffset, prevShots } = JSON.parse(input) as {
       outline: unknown; assetNames: string[]; sceneNames?: string[]; count: number; dialoguePlan?: string[][] | null;
+      indexOffset?: number; prevShots?: { index: number; scene: string; summary: string }[];
     };
     const scenes = sceneNames?.length ? `\n可用场景:${sceneNames.join("、")}` : "";
     // 台词分配表由代码算死,分镜师逐字照抄;每镜秒数供运镜/台词节奏参考
     const planText = Array.isArray(dialoguePlan)
-      ? `\n各镜台词分配表(dialogue 必须逐字照抄,禁止增删改):\n${dialoguePlan.map((lines, i) => `第${i + 1}镜:${lines.length ? lines.join("；") : "(无台词)"}`).join("\n")}`
+      ? `\n各镜台词分配表(dialogue 必须逐字照抄,禁止增删改):\n${dialoguePlan.map((lines, i) => `第${(indexOffset ?? 0) + i + 1}镜:${lines.length ? lines.join("；") : "(无台词)"}`).join("\n")}`
+      : "";
+    // 续拍分支:镜号续接 + 前情提要,剧情从上批末尾继续推进
+    const continueText = indexOffset && prevShots?.length
+      ? `\n本批为续拍:镜号从第${indexOffset + 1}镜起连续编号;剧情必须紧接前情提要的末尾继续推进,禁止重复已拍内容;首镜若与前情末镜同场景,起幅直接延续其结尾画面(尾帧参考图)`
       : "";
     // 校验不合规时带违规清单重试:提示词约束对 LLM 不可靠(台词分配的教训),改用"检查-反馈-重试"合同
     const retry = retryIssues?.length ? `\n\n你上一次的输出存在以下违规,本次必须全部修正:\n${retryIssues.map((s, i) => `${i + 1}.${s}`).join("\n")}` : "";
-    return `分镜数量:${count}\n每镜秒数:${secondsPerShot ?? "10"}${planText}\n剧本大纲:\n${JSON.stringify(outline)}\n可用角色:${assetNames.join("、")}${scenes}${retry}`;
+    return `分镜数量:${count}\n每镜秒数:${secondsPerShot ?? "10"}${planText}${continueText}\n剧本大纲:\n${JSON.stringify(outline)}\n可用角色:${assetNames.join("、")}${scenes}${retry}`;
   }
   // shotCount:outline 分支注入片长容量;storyboard 分支的 count 从 input 内部解析
   if (task === "outline" && shotCount && secondsPerShot) {
@@ -56,8 +61,9 @@ const CAMERA_VERBS: [RegExp, string][] = [
 ];
 
 /** 分镜产出校验:相邻景别/主运镜重复、台词与分配表不符、说话人未出镜、description 提及的说话人未入 characters。
+ * indexOffset>0 表示续拍批次:镜号偏移显示,批次首镜豁免相邻景别/运镜与起幅衔接检查(与上批末镜的衔接由尾帧参考兜底)。
  * 返回违规清单,空数组=合规 */
-export function validateStoryboard(data: unknown, count: number, dialoguePlan?: string[][] | null): string[] {
+export function validateStoryboard(data: unknown, count: number, dialoguePlan?: string[][] | null, indexOffset = 0): string[] {
   const shots = (data as { shots?: { scene?: string; description?: string; dialogue?: string[]; characters?: string[] }[] })?.shots;
   if (!Array.isArray(shots) || shots.length !== count) {
     return [`分镜数量必须严格等于${count}`];
@@ -71,12 +77,16 @@ export function validateStoryboard(data: unknown, count: number, dialoguePlan?: 
   let prevSize = "";
   let prevVerb = "";
   shots.forEach((s, i) => {
-    const n = i + 1;
+    const n = indexOffset + i + 1;
     const desc = s.description ?? "";
     const size = SHOT_SIZES.find((w) => desc.includes(w)) ?? "";
     const verb = CAMERA_VERBS.find(([re]) => re.test(desc))?.[1] ?? "";
-    if (size && size === prevSize) issues.push(`第${n - 1}镜与第${n}镜景别重复(${size}),相邻两镜景别必须变化`);
-    if (verb && verb === prevVerb) issues.push(`第${n - 1}镜与第${n}镜主运镜重复(${verb}),相邻两镜主运镜必须不同`);
+    // 续拍批次首镜:上一镜在上批,本批 LLM 看不到其构图,相邻重复/起幅衔接交由尾帧参考兜底
+    const firstOfBatch = i === 0 && indexOffset > 0;
+    if (!firstOfBatch) {
+      if (size && size === prevSize) issues.push(`第${n - 1}镜与第${n}镜景别重复(${size}),相邻两镜景别必须变化`);
+      if (verb && verb === prevVerb) issues.push(`第${n - 1}镜与第${n}镜主运镜重复(${verb}),相邻两镜主运镜必须不同`);
+    }
     // B:同场景起幅衔接合同——上一镜落幅景别与本镜起幅景别必须一致(实测起幅写全新构图,尾帧参考被完全无视)
     const prev = shots[i - 1];
     // E:落幅必填——B 合同的锚点:LLM 省写"落幅至X"时 B 检查空转(实测第2/3镜无落幅,2→3、3→4 剪切点构图跳变)
@@ -133,7 +143,7 @@ export function validateStoryboard(data: unknown, count: number, dialoguePlan?: 
  * [3,2,2,2,2],龙猫 4 句台词与告别句全部消失;说话人随之不再出镜→无立绘参考→跨镜身份塌缩。
  * 台词与分配表的逐字合同不再信任 LLM,由代码强制执行;description 按被改写台词写就的残留
  * 漂移是零丢句的代价(三次重试已给足 LLM 对齐机会)。返回修复清单供日志审计。 */
-export function repairStoryboard(data: unknown, dialoguePlan?: string[][] | null): string[] {
+export function repairStoryboard(data: unknown, dialoguePlan?: string[][] | null, indexOffset = 0): string[] {
   if (!Array.isArray(dialoguePlan)) return [];
   const shots = (data as { shots?: { description?: string; dialogue?: string[]; characters?: string[] }[] })?.shots;
   if (!Array.isArray(shots)) return [];
@@ -145,7 +155,7 @@ export function repairStoryboard(data: unknown, dialoguePlan?: string[][] | null
     const want = dialoguePlan[i] ?? [];
     const characters = Array.isArray(s.characters) ? s.characters : [];
     if (JSON.stringify(s.dialogue ?? []) !== JSON.stringify(want)) {
-      fixes.push(`第${i + 1}镜 dialogue 回填分配表(${(s.dialogue ?? []).length}句→${want.length}句)`);
+      fixes.push(`第${indexOffset + i + 1}镜 dialogue 回填分配表(${(s.dialogue ?? []).length}句→${want.length}句)`);
       s.dialogue = want;
     }
     const add: string[] = [];
@@ -157,7 +167,7 @@ export function repairStoryboard(data: unknown, dialoguePlan?: string[][] | null
       if (!characters.includes(sp) && !add.includes(sp) && mentionedAsPresent(s.description ?? "", sp)) add.push(sp);
     }
     if (add.length) {
-      fixes.push(`第${i + 1}镜 characters 补入:${add.join("、")}`);
+      fixes.push(`第${indexOffset + i + 1}镜 characters 补入:${add.join("、")}`);
       s.characters = [...characters, ...add];
     }
   });
@@ -194,14 +204,14 @@ export async function POST(req: NextRequest) {
           }
           // 分镜输出做合同校验:违规不直接放行,带违规清单重试;最后一轮仍违规则代码修复后放行
           if (task === "storyboard") {
-            const parsed = JSON.parse(input) as { count: number; dialoguePlan?: string[][] | null };
-            const issues = validateStoryboard(data, parsed.count, parsed.dialoguePlan);
+            const parsed = JSON.parse(input) as { count: number; dialoguePlan?: string[][] | null; indexOffset?: number };
+            const issues = validateStoryboard(data, parsed.count, parsed.dialoguePlan, parsed.indexOffset ?? 0);
             if (issues.length > 0 && attempt < maxAttempts - 1) {
               console.warn(`[agent/plan] storyboard 第${attempt + 1}轮违规${issues.length}处,带清单重试:`, issues.join(" | "));
               retryIssues = issues;
               continue;
             }
-            const repairs = repairStoryboard(data, parsed.dialoguePlan);
+            const repairs = repairStoryboard(data, parsed.dialoguePlan, parsed.indexOffset ?? 0);
             if (repairs.length) console.warn(`[agent/plan] storyboard 最终代码修复:`, repairs.join(" | "));
             return NextResponse.json(issues.length ? { ok: true, data, issues } : { ok: true, data });
           }
