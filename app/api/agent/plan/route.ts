@@ -27,7 +27,9 @@ function buildUser(task: string, input: string, shotCount?: number, secondsPerSh
     const retry = retryIssues?.length ? `\n\n你上一次的输出存在以下违规,本次必须全部修正:\n${retryIssues.map((s, i) => `${i + 1}.${s}`).join("\n")}` : "";
     return `${input}\n(全片共${shotCount}个分镜,每镜${secondsPerShot}秒,全片约${Number(shotCount) * Number(secondsPerShot)}秒)${retry}`;
   }
-  return shotCount ? `${input}\n(分镜数量备用:${shotCount})` : input;
+  // assets 等其余任务:原样透传,但校验违规时同样带清单重试
+  const retry = retryIssues?.length ? `\n\n你上一次的输出存在以下违规,本次必须全部修正:\n${retryIssues.map((s, i) => `${i + 1}.${s}`).join("\n")}` : "";
+  return shotCount ? `${input}\n(分镜数量备用:${shotCount})${retry}` : `${input}${retry}`;
 }
 
 /** 大纲产出校验(A:剧本硬合同)。实测翻车:6镜只写6句台词(后4镜全程无声)、1字超短句"唔..."、
@@ -59,6 +61,36 @@ const CAMERA_VERBS: [RegExp, string][] = [
   [/推镜|推近|推进|缓推/, "推"], [/拉镜|拉远|缓拉/, "拉"], [/摇镜|摇拍|缓慢摇/, "摇"], [/横移|移镜|平移/, "移"],
   [/跟拍|跟随/, "跟"], [/环绕|绕拍/, "环绕"],
 ];
+
+/** 资产清单校验(B合同):大纲 characters/scenes 里的每个名字都必须有逐字一致的资产条目。
+ * 实测翻车:续写段引入新角色"外星副官",资产规划 LLM 没把它列进清单,而 assets 是唯一没有
+ * 校验的规划环节——该角色全程无立绘参考,台词在说、画面在即兴乱画(第9镜灰皮外星人、
+ * 第15镜黑发人形,跨镜身份塌缩)。返回违规清单,空数组=合规 */
+function validateAssets(data: unknown, input: string): string[] {
+  const assets = (data as { assets?: { kind?: string; name?: string; prompt?: string }[] })?.assets;
+  if (!Array.isArray(assets) || !assets.length) return ["assets 资产清单不能为空"];
+  let outline: { characters?: { name?: string }[]; scenes?: { name?: string }[] } = {};
+  try { outline = JSON.parse(input); } catch { /* 大纲解析失败时跳过覆盖检查,其余检查照常 */ }
+  const entries = assets.map((a) => `${a.kind ?? ""}:${(a.name ?? "").trim()}`);
+  const issues: string[] = [];
+  for (const c of outline.characters ?? []) {
+    if (!entries.includes(`character:${c.name ?? ""}`)) {
+      issues.push(`角色「${c.name}」在资产清单中缺失:大纲 characters 里的每个角色都必须有 kind:"character" 且 name 逐字一致的条目,没有参考图的出场角色会被视频模型即兴乱画`);
+    }
+  }
+  for (const sc of outline.scenes ?? []) {
+    if (!entries.includes(`scene:${sc.name ?? ""}`)) {
+      issues.push(`场景「${sc.name}」在资产清单中缺失:大纲 scenes 里的每个场景都必须有 kind:"scene" 且 name 逐字一致的条目`);
+    }
+  }
+  const badKind = assets.filter((a) => !["character", "scene", "prop"].includes(a.kind ?? ""));
+  if (badKind.length) issues.push(`assets 存在非法 kind(只允许 character/scene/prop):${badKind.map((a) => `${a.kind}:${a.name}`).join("、")}`);
+  const noPrompt = assets.filter((a) => !(a.prompt ?? "").trim());
+  if (noPrompt.length) issues.push(`assets 存在缺 prompt 的条目:${noPrompt.map((a) => a.name).join("、")}`);
+  const propCount = assets.filter((a) => a.kind === "prop").length;
+  if (propCount > 3) issues.push(`道具资产 ${propCount} 个,超过上限 3 个`);
+  return issues;
+}
 
 /** 分镜产出校验:相邻景别/主运镜重复、台词与分配表不符、说话人未出镜、description 提及的说话人未入 characters。
  * indexOffset>0 表示续拍批次:镜号偏移显示,批次首镜豁免相邻景别/运镜与起幅衔接检查(与上批末镜的衔接由尾帧参考兜底)。
@@ -108,6 +140,29 @@ export function validateStoryboard(data: unknown, count: number, dialoguePlan?: 
       if (speech) {
         issues.push(`第${n}镜没有台词,description 却写了言语动作"${speech[0]}":无台词镜头角色嘴部保持闭合,改用眼神、表情与肢体动作推进剧情`);
       }
+    }
+    // C':有台词镜反向合同——每个说话人必须在 description 中有出场安排。实测:外星副官的台词
+    // 在分配表里,description 却只写它"盯着屏幕",无人安排其说话动作,人声成了来历不明的画外音
+    if (want) {
+      for (const line of want) {
+        const sp = /^([^：:]+)[：:]/.exec(line.trim())?.[1]?.trim();
+        if (sp && !mentionedAsPresent(desc, sp)) {
+          issues.push(`第${n}镜分配表台词的说话人"${sp}"未在 description 中安排出场:必须写出其出场与说话动作,禁止台词由画面外/未描述的人说出`);
+        }
+      }
+    }
+    // F':description 禁用 <Picture N> 占位符——运行时参考图按"本镜出镜角色"动态编号,
+    // 与分镜师按大纲全局顺序写的编号必然错位(实测"<Picture 3>外星副官"实际指向场景图,
+    // 提示词自相矛盾,模型即兴乱画);绑定由系统按角色名自动完成
+    const picRef = desc.match(/<Picture\s*\d+/i);
+    if (picRef) {
+      issues.push(`第${n}镜 description 使用了"${picRef[0]}"占位符:禁止使用 <Picture N>,人物直接写角色名,系统会自动将角色名绑定到参考图`);
+    }
+    // G':运镜速度词——运镜类别检查认不出"迅速拉远"(实测第16镜写了"镜头迅速拉远",
+    // 前30%帧差19~25为全批最快,违反缓慢匀速硬性要求)
+    const camSpeed = desc.match(/(?:镜头|机位)(?:迅速|快速|急速|猛|骤然)[^。；;，,]{0,6}|(迅速|快速|急速)(拉远|推近|摇移|横移|摇镜|变焦)/);
+    if (camSpeed) {
+      issues.push(`第${n}镜 description 运镜速度违规"${camSpeed[0]}":主运镜必须缓慢匀速,删去速度词,只允许缓慢推近/拉远/横移/摇镜/跟随/小幅环绕`);
     }
     prevSize = size;
     prevVerb = verb;
@@ -182,8 +237,8 @@ export async function POST(req: NextRequest) {
     if (!system || !input?.trim()) return NextResponse.json({ error: "参数错误" }, { status: 400 });
     let lastErr: Error | null = null;
     let retryIssues: string[] | undefined;
-    // 分镜/大纲给 3 次机会:实测 2 次时 LLM 会借最后一次重试整篇重写、私自改台词(台词合同由 repairStoryboard 代码兜底)
-    const maxAttempts = task === "storyboard" || task === "outline" || task === "outline-continue" ? 3 : 2;
+    // 分镜/大纲/资产给 3 次机会:实测 2 次时 LLM 会借最后一次重试整篇重写、私自改台词(台词合同由 repairStoryboard 代码兜底)
+    const maxAttempts = ["storyboard", "outline", "outline-continue", "assets"].includes(task!) ? 3 : 2;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         const raw = await createAgnesChatCompletion({
@@ -213,6 +268,16 @@ export async function POST(req: NextRequest) {
             }
             const repairs = repairStoryboard(data, parsed.dialoguePlan, parsed.indexOffset ?? 0);
             if (repairs.length) console.warn(`[agent/plan] storyboard 最终代码修复:`, repairs.join(" | "));
+            return NextResponse.json(issues.length ? { ok: true, data, issues } : { ok: true, data });
+          }
+          // 资产清单校验(B合同):大纲角色/场景逐字覆盖检查,缺则带清单重试
+          if (task === "assets") {
+            const issues = validateAssets(data, input!);
+            if (issues.length > 0 && attempt < maxAttempts - 1) {
+              console.warn(`[agent/plan] assets 第${attempt + 1}轮违规${issues.length}处,带清单重试:`, issues.join(" | "));
+              retryIssues = issues;
+              continue;
+            }
             return NextResponse.json(issues.length ? { ok: true, data, issues } : { ok: true, data });
           }
           return NextResponse.json({ ok: true, data });

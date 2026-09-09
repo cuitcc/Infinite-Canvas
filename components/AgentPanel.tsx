@@ -345,7 +345,7 @@ export function AgentPanel({ onClose }: Props) {
               const remaining = remainingScriptLines(
                 oj.script,
                 oj.characters.map((c) => c.name),
-                agentState!.shotCount,
+                agentState!.shots.length,
                 Number(agentState!.shotSeconds) || 10,
               );
               return (

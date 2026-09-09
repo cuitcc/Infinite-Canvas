@@ -173,7 +173,8 @@ export function planShotDialogue(
   return plan; // 超出总容量的台词自然舍弃
 }
 
-/** 剧本中尚未装入分镜的剩余台词(已消耗量=单批容量,与 planShotDialogue 同口径)。
+/** 剧本中尚未装入分镜的剩余台词。shotCount 传「已拍累计镜数」(容量=累计镜数×每镜句数),
+ * 与 planShotDialogue 的续拍跳句同口径;传单批镜数会在多批后误报剩余。
  * 供「继续制作」入口判断与展示:空数组=剧本已全部拍完 */
 export function remainingScriptLines(
   script: string,
@@ -184,4 +185,17 @@ export function remainingScriptLines(
   const lines = selectScriptLines(script, characterNames);
   const consumed = Math.min(lines.length, scriptCapacity(shotCount, secondsPerShot));
   return lines.slice(consumed).map((l) => `${l.speaker}：${l.text}`);
+}
+
+/** 已装入分镜的台词句数(累计口径):实际句数与「已拍总镜数的容量」的较小值。
+ * 续拍跳句必须用它而不是单批容量——实测首拍剧本14句<容量16,用满容量16跳句,
+ * 续写段前2句(含关键伏笔"你的眼睛已经变成了黑色")被整句跳过,剧情断链。 */
+export function consumedScriptLineCount(
+  script: string,
+  characterNames: string[],
+  totalShotsSoFar: number,
+  secondsPerShot: number,
+): number {
+  const lines = selectScriptLines(script, characterNames);
+  return Math.min(lines.length, scriptCapacity(totalShotsSoFar, secondsPerShot));
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCanvasStore, type AgentAsset, type AgentShot, type CanvasNodeData } from "./store";
-import { planShotDialogue, remainingScriptLines, scriptCapacity } from "./dialogue-plan";
+import { planShotDialogue, remainingScriptLines, consumedScriptLineCount } from "./dialogue-plan";
 
 // ==================== 类型定义 ====================
 
@@ -116,6 +116,19 @@ const patchErr = (nodeId: string, error?: string) =>
 /** 截取视频最后一帧并上传,返回图片 URL;任何失败返回 null(降级为不使用尾帧衔接)。
  * 用 /api/media/{id} 同源播放避开 canvas 跨域污染,无需 ffmpeg。 */
 async function extractLastFrameUrl(mediaId: string): Promise<string | null> {
+  // 两次尝试:截帧链路任一环偶发失败(加载/seek 超时、上传抖动)都会让续拍批失去
+  // 跨批衔接锚点——实测第8镜尾帧提取失败,续写批首镜冷开场,批次边界帧差 83.9(全片最断裂)
+  let last: string | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    last = await extractLastFrameOnce(mediaId);
+    if (last) return last;
+    await new Promise((r) => setTimeout(r, 800));
+  }
+  console.warn("[agent] 上一镜尾帧截取两次均失败,本镜降级为无尾帧衔接");
+  return last;
+}
+
+async function extractLastFrameOnce(mediaId: string): Promise<string | null> {
   try {
     const video = document.createElement("video");
     video.muted = true;
@@ -368,11 +381,8 @@ export async function continueAgent() {
   aborted = false;
   const seconds = Number(s0.shotSeconds) || 10;
   const names = s0.outlineJson.characters.map((c) => c.name);
-  if (!remainingScriptLines(s0.outlineJson.script, names, s0.shotCount, seconds).length) {
-    patch({ stage: "done", error: "剧本台词已全部拍完,没有可续拍的内容" });
-    return;
-  }
-  const remaining = remainingScriptLines(s0.outlineJson.script, names, s0.shotCount, seconds);
+  // 剩余量按已拍累计镜数算容量(单批镜数会在拍完两批后误报剩余,拍出整批无台词镜)
+  const remaining = remainingScriptLines(s0.outlineJson.script, names, s0.shots.length, seconds);
   if (!remaining.length) {
     patch({ stage: "done", error: "剧本台词已全部拍完,没有可续拍的内容" });
     return;
@@ -449,15 +459,19 @@ async function shootNextBatch() {
     const outlineNode = useCanvasStore.getState().nodes.find((n) => n.id === s0.outlineNodeId);
     const assetNames = s0.assets.filter((a) => a.kind === "character").map((a) => a.name);
     const sceneNames = s0.assets.filter((a) => a.kind === "scene").map((a) => a.name);
-    // 跳过已消耗的前缀句数(与首拍同一分配管线,口径一致)
+    const indexOffset = s0.shots.length;
+    const seconds = Number(s0.shotSeconds) || 10;
+    // 跳过已实际消耗的前缀句数(累计口径=已拍总镜容量与剧本句数的较小值)。
+    // 实测翻车:用单批容量跳句,首拍剧本14句<容量16时多跳2句,续写段前2句(含
+    // "你的眼睛已经变成了黑色"关键伏笔)被整句跳过,剧情断链
     const dialoguePlan = s0.outlineJson
       ? planShotDialogue(
           s0.outlineJson.script,
           s0.outlineJson.characters.map((c) => c.name),
-          s0.shotCount, Number(s0.shotSeconds) || 10, scriptCapacity(s0.shotCount, Number(s0.shotSeconds) || 10),
+          s0.shotCount, seconds,
+          consumedScriptLineCount(s0.outlineJson.script, s0.outlineJson.characters.map((c) => c.name), indexOffset, seconds),
         )
       : null;
-    const indexOffset = s0.shots.length;
     const prevShots = s0.shots.map((sh) => ({
       index: sh.index, scene: sh.scene, summary: sh.description.slice(0, 80),
     }));
