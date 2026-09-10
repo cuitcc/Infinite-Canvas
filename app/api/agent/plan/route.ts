@@ -108,6 +108,14 @@ function validateAssets(data: unknown, input: string): string[] {
   if (noPrompt.length) issues.push(`assets 存在缺 prompt 的条目:${noPrompt.map((a) => a.name).join("、")}`);
   const propCount = assets.filter((a) => a.kind === "prop").length;
   if (propCount > 3) issues.push(`道具资产 ${propCount} 个,超过上限 3 个`);
+  // 场景纯空间合同:场景图是静止地点的空镜参考,写成剧情事件会被画成剧情瞬间(有动作必有
+  // 施动者,实测"剑芒击碎石台"画出持剑人),人物词/否定词同理(实测"无人物"反而画出主角)
+  const SCENE_EVENT_RE = /人物|主角|身影|侠客|修士|少年|少女|男子|女子|老者|僧人|道士|士兵|军官|剑芒|剑气|剑光|刀光|击碎|击穿|爆炸|炸裂|斩|劈|挥剑|打斗|对峙|交锋|崩塌|倒塌|燃烧|飞溅|震得|剧烈摇晃/;
+  for (const a of assets.filter((x) => x.kind === "scene")) {
+    if (SCENE_EVENT_RE.test(a.prompt ?? "")) {
+      issues.push(`场景「${a.name}」的 prompt 写成了剧情事件或含人物:场景提示词必须是静止的纯空间描述(空间结构+光影+氛围),禁止事件/动作/能量爆发/人物,不要写"无人物"等否定词(空场景锚点由系统追加)`);
+    }
+  }
   return issues;
 }
 

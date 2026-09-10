@@ -2,6 +2,7 @@
 
 import { useCanvasStore, type AgentAsset, type AgentShot, type CanvasNodeData } from "./store";
 import { planShotDialogue, remainingScriptLines, consumedScriptLineCount } from "./dialogue-plan";
+import { hardenScenePrompt } from "./scene-prompt";
 
 // ==================== 类型定义 ====================
 
@@ -373,7 +374,8 @@ async function generateAssetBatch(batch: AgentAsset[], stylePrompt: string, star
       a.kind === "character" ? "角色" : a.kind === "scene" ? "场景" : "道具";
     const nodeId = addAgentNode("image", { x: 400, y: (start.length + i) * 320 }, {
       label: `${kindLabel}-${a.name}`,
-      prompt: `${stylePrompt},${a.prompt}`,
+      // 场景资产过空场景兜底:t2i 无 negative_prompt 通道,否定式"无人物"实测会画出主角
+      prompt: `${stylePrompt},${a.kind === "scene" ? hardenScenePrompt(a.prompt) : a.prompt}`,
       imageTier: "2K", // 参考图无需 4K:减小图片体积,避免多张 4K 大图把页面卡住
     });
     if (s.outlineNodeId) connect(s.outlineNodeId, nodeId);
