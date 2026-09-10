@@ -2,7 +2,7 @@
 
 import { useCanvasStore, type AgentAsset, type AgentShot, type CanvasNodeData } from "./store";
 import { planShotDialogue, remainingScriptLines, consumedScriptLineCount } from "./dialogue-plan";
-import { hardenScenePrompt } from "./scene-prompt";
+import { hardenScenePrompt, buildScenePurifyPrompt, SCENE_PURIFY_NEGATIVE } from "./scene-prompt";
 
 // ==================== 类型定义 ====================
 
@@ -385,6 +385,24 @@ async function generateAssetBatch(batch: AgentAsset[], stylePrompt: string, star
     const ok = await generateAndAwait(nodeId);
     batch[i] = { ...batch[i], status: ok ? "done" : "failed" };
     patch({ assets: [...start, ...batch] });
+    // 场景图两段式净化:t2i 通道无 negative_prompt,强先验场景(云海玉台/祭坛/王座)会把人
+    // 直接画进图里(实测玉台场景图正中站着白衣修士,该图再当参考图污染镜头);img2img 是
+    // 唯一携带 negative_prompt 的通道,以原图为参考重绘一次,负向词压掉人物。净化失败降级
+    // 用原图;lockIdentity 必须关——store 会给带参考图的图片节点追加"保持人物面部特征"
+    // 一致性后缀,把要删的人物又锚回去
+    if (ok && a.kind === "scene" && !aborted) {
+      const purifyId = addAgentNode("image", { x: 640, y: (start.length + i) * 320 }, {
+        label: `${kindLabel}-${a.name}-净化`,
+        prompt: buildScenePurifyPrompt(a.prompt),
+        imageTier: "2K",
+        negativePrompt: SCENE_PURIFY_NEGATIVE,
+        lockIdentity: false,
+      });
+      connect(nodeId, purifyId);
+      const purifyOk = await generateAndAwait(purifyId);
+      if (purifyOk) batch[i] = { ...batch[i], nodeId: purifyId };
+      patch({ assets: [...start, ...batch] });
+    }
   }
 }
 
@@ -619,6 +637,13 @@ async function runShotBatch(batch: AgentShot[], stylePrompt: string, initialTail
     const tailLead = tailIdx >= 0
       ? `本镜视频必须从<Picture ${tailIdx + 1}>(上一镜结尾画面)起播,只有第0帧画面与它完全一致,从第1帧起立即展开本镜描述的核心事件,`
       : "";
+    // 跨场景冷开场声明:换场景时尾帧被刻意丢弃(见循环尾),模型失去衔接锚点后仍残留上一镜的
+    // 雾气过渡与场景记忆,把硬切演成"融化式"过渡(修仙浓雾风格实测尤甚,人物在雾里悄悄换掉);
+    // 显式声明与上一镜无画面连续性,直接以本镜场景实景开场。首镜无"上一镜"不适用
+    const hasPrevShot = i > 0 || prefix.length > 0;
+    const cutLead = tailIdx < 0 && hasPrevShot
+      ? "本镜是新场景的开场镜头,与上一镜画面没有任何连续性:直接以本镜场景的实景状态开场,禁止云雾涌动、光影闪现、画面渐变等过渡动画,不要出现上一镜场景的任何残留元素,"
+      : "";
 
     // 台词全量保留,不做绑定过滤:说话人绑不上参考图的行由 buildDialogueInjection 按画外音注入
     // (声音先于画面揭示是常规电影语言),不再静默丢弃(实测丢弃导致整句从片中消失)。
@@ -661,7 +686,7 @@ async function runShotBatch(batch: AgentShot[], stylePrompt: string, initialTail
     })();
     const nodeId = addAgentNode("video", { x: 800, y: i * 320 }, {
       label: `第${shot.index}镜`,
-      prompt: `${stylePrompt},${tailLead}${shot.description},${identityNote},${soundNote}${speakerNote ? `,${speakerNote}` : ""}`,
+      prompt: `${stylePrompt},${tailLead}${cutLead}${shot.description},${identityNote},${soundNote}${speakerNote ? `,${speakerNote}` : ""}`,
       dialogue: shotDialogue.length ? shotDialogue.join("\n") : undefined,
       seconds: s.shotSeconds ?? "10",
       aspectRatio: s.aspectRatio,
