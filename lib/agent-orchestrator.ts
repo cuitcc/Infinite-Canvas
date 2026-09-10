@@ -1,6 +1,6 @@
 "use client";
 
-import { useCanvasStore, type AgentAsset, type AgentShot, type CanvasNodeData } from "./store";
+import { useCanvasStore, type AgentAsset, type AgentShot, type AgentState, type CanvasNodeData } from "./store";
 import { planShotDialogue, remainingScriptLines, consumedScriptLineCount, scriptCapacity } from "./dialogue-plan";
 import { hardenScenePrompt, buildScenePurifyPrompt, SCENE_PURIFY_NEGATIVE } from "./scene-prompt";
 
@@ -406,12 +406,32 @@ async function generateAssetBatch(batch: AgentAsset[], stylePrompt: string, star
   }
 }
 
+/** 状态卫生守卫:续拍/续写依赖的 agentState 是单个标签页的内存态,画布可能已被清空或任务
+ * 来自另一个标签页(实测:过期状态 shots=[] 时点续写,分配器从第1句重排,整批重拍原剧情,
+ * 且资产 nodeId 失效导致角色参考图静默丢失)。启动前校验任务节点仍存在于画布,失败给可见错误 */
+function assertAgentStateFresh(s0: AgentState) {
+  const nodes = useCanvasStore.getState().nodes;
+  if (!nodes.some((n) => n.id === s0.outlineNodeId)) {
+    throw new Error("画布状态已过期:剧本大纲节点已不在画布上(画布被清空,或本面板属于其他/旧标签页)。请回到原任务所在标签页操作,或重新开始一次新任务");
+  }
+  const staleAsset = s0.assets.find((a) => a.status === "done" && a.nodeId && !nodes.some((n) => n.id === a.nodeId));
+  if (staleAsset) {
+    throw new Error("画布状态已过期:资产「" + staleAsset.name + "」的节点已不在画布上。请回到原任务所在标签页操作,或重新开始一次新任务");
+  }
+}
+
 /** 模式A·继续制作:剧本台词超出已拍分镜容量时,复用大纲/风格/已完成的资产,把剩余台词装进新一批分镜。
  * 镜号续接、首镜跨批衔接上批末镜尾帧(同场景时)、时间线只追加新批片段;批量按剩余台词收缩,
  * 只剩一两句时只拍 1 镜,不产出整批无台词垫场镜;拍完回到 done 可再次继续,直到剩余台词耗尽。 */
 export async function continueAgent() {
   const s0 = useCanvasStore.getState().agentState;
   if (!s0?.outlineJson || s0.stage !== "done") return;
+  try {
+    assertAgentStateFresh(s0);
+  } catch (e) {
+    patch({ error: (e as Error).message });
+    return;
+  }
   aborted = false;
   const seconds = Number(s0.shotSeconds) || 10;
   const names = s0.outlineJson.characters.map((c) => c.name);
@@ -436,6 +456,12 @@ export async function continueAgent() {
 export async function extendAgent(isFinal = false) {
   const s0 = useCanvasStore.getState().agentState;
   if (!s0?.outlineJson || !s0.outlineNodeId || s0.stage !== "done") return;
+  try {
+    assertAgentStateFresh(s0);
+  } catch (e) {
+    patch({ error: (e as Error).message });
+    return;
+  }
   aborted = false;
   patch({ stage: "outline", error: null });
   try {
@@ -467,10 +493,15 @@ export async function extendAgent(isFinal = false) {
       scenes: [...base.scenes, ...seg.scenes.filter((sc) => !base.scenes.some((o) => o.name === sc.name))],
       script: `${base.script}\n${seg.script}`,
     };
-    // 大纲文本节点追加新段,画布可见可编辑
+    // 大纲文本节点追加新段,画布可见可编辑。updateNodeData 对不存在的节点静默 no-op
+    // (实测:节点 id 失效时【续】段无声丢失,新剧情只剩资产没有台词),必须回读验证
     useCanvasStore.getState().updateNodeData(s0.outlineNodeId, {
       prompt: `${outlineToText(base)}\n\n【续】${seg.script}`,
     });
+    const outlineAfter = useCanvasStore.getState().nodes.find((n) => n.id === s0.outlineNodeId);
+    if (!outlineAfter?.data.prompt || !outlineAfter.data.prompt.includes("【续】")) {
+      throw new Error("续写中止:大纲节点更新失败(【续】段未写入),画布状态可能已过期");
+    }
     patch({ outlineJson: merged, stage: "assets" });
 
     // 差量资产:按合并后大纲重列资产清单,只生成 store 里还没有的(kind+name 去重)
@@ -568,6 +599,13 @@ async function shootNextBatch(overrideCount?: number) {
     stNow.setTimeline([...stNow.timeline, ...clips]);
     patch({ stage: "done" });
   } catch (e) {
+    // 分镜批失败:一批镜都没拍成时严禁伪装成 done——done + shots=[] 会让「继续制作/续写」
+    // 从第1句整批重拍原剧情(实测:过期 done 状态下点续写,分配器重排原11句,整批重复)。
+    // 走中止路径,面板给重新开始;已有成功镜时保持 done + 报错,用户仍可对剩余台词续拍
+    if (s0.shots.length === 0) {
+      patch({ stage: "aborted", abortedFrom: "storyboard", error: (e as Error).message });
+      return;
+    }
     patch({ stage: "done", error: (e as Error).message });
   }
 }
@@ -670,7 +708,7 @@ async function runShotBatch(batch: AgentShot[], stylePrompt: string, initialTail
         if (r.name === "场景") return `${p}为场景与氛围参考`;
         if (r.name === "上一镜尾帧") return `${p}是上一镜结尾画面,本镜必须直接从这一画面开始(把它当作首帧):仅第0帧与它完全一致,人物位置、朝向、服装与场景状态从它延续,随后本镜描述的核心事件(动作、变化、视觉事件)必须真实发生并成为画面主体,禁止只拍角色反应而跳过事件本身`;
         if (r.name.startsWith("道具·")) return `${p}为道具${r.name.slice(3)}的形制参考`;
-        return `${p}为${r.name}的长相、发型与服装参考,只取外形,其站姿与朝向不作参考`;
+        return `${p}为${r.name}的长相、发型与服装参考,只取外形,其站姿与朝向不作参考,服装款式、颜色与徽章配饰细节与参考图逐项一致,远景/夜景镜头也不例外`;
       })
       .join(";");
     // 声音设计(官方六要素之一):有台词锁定干净人声——撤销"现场动作音效"授权(实测模型会拿它

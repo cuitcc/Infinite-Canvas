@@ -116,6 +116,22 @@ function validateAssets(data: unknown, input: string): string[] {
       issues.push(`场景「${a.name}」的 prompt 写成了剧情事件或含人物:场景提示词必须是静止的纯空间描述(空间结构+光影+氛围),禁止事件/动作/能量爆发/人物,不要写"无人物"等否定词(空场景锚点由系统追加)`);
     }
   }
+  // 场景时段一致合同:全剧场景共享同一时段光线(实测黄昏废墟↔深夜包围圈来回硬切,时段跳变
+  // 的切点非常刺眼)。只认明确的时段词并分四类,场景间出现两类以上才判违规(保守口径防误报)
+  const TIME_CLASS: [RegExp, string][] = [
+    [/清晨|黎明|破晓|拂晓|朝阳|日出/, "清晨"],
+    [/白天|上午|正午|中午|午后|下午|烈日|白昼/, "白天"],
+    [/黄昏|傍晚|落日|夕阳|暮色/, "黄昏"],
+    [/深夜|夜晚|夜空|夜色|午夜|月夜|星夜/, "夜晚"],
+  ];
+  const timeWords = new Set<string>();
+  for (const a of assets.filter((x) => x.kind === "scene")) {
+    const p = a.prompt ?? "";
+    for (const [re, label] of TIME_CLASS) if (re.test(p)) timeWords.add(label);
+  }
+  if (timeWords.size > 1) {
+    issues.push(`场景时段不一致(${[...timeWords].join("、")}混用):全剧所有场景必须共享同一时段与光线基调,请统一改写各场景 prompt 的时间词`);
+  }
   return issues;
 }
 
