@@ -1,7 +1,7 @@
 "use client";
 
 import { useCanvasStore, type AgentAsset, type AgentShot, type CanvasNodeData } from "./store";
-import { planShotDialogue, remainingScriptLines, consumedScriptLineCount } from "./dialogue-plan";
+import { planShotDialogue, remainingScriptLines, consumedScriptLineCount, scriptCapacity } from "./dialogue-plan";
 import { hardenScenePrompt, buildScenePurifyPrompt, SCENE_PURIFY_NEGATIVE } from "./scene-prompt";
 
 // ==================== 类型定义 ====================
@@ -407,8 +407,8 @@ async function generateAssetBatch(batch: AgentAsset[], stylePrompt: string, star
 }
 
 /** 模式A·继续制作:剧本台词超出已拍分镜容量时,复用大纲/风格/已完成的资产,把剩余台词装进新一批分镜。
- * 镜号续接、首镜跨批衔接上批末镜尾帧(同场景时)、时间线只追加新批片段;每批分镜数沿用 shotCount,
- * 拍完回到 done 可再次继续,直到剩余台词耗尽(面板按钮随之隐藏)。 */
+ * 镜号续接、首镜跨批衔接上批末镜尾帧(同场景时)、时间线只追加新批片段;批量按剩余台词收缩,
+ * 只剩一两句时只拍 1 镜,不产出整批无台词垫场镜;拍完回到 done 可再次继续,直到剩余台词耗尽。 */
 export async function continueAgent() {
   const s0 = useCanvasStore.getState().agentState;
   if (!s0?.outlineJson || s0.stage !== "done") return;
@@ -421,29 +421,40 @@ export async function continueAgent() {
     patch({ stage: "done", error: "剧本台词已全部拍完,没有可续拍的内容" });
     return;
   }
-  await shootNextBatch();
+  // 批量收缩:整批 shotCount 装不下几句剩余台词时,多出来的镜全是无台词垫场镜
+  // (实测剩1~2句仍拍满一批,每镜一次视频API且成片尾声拖沓);scriptCapacity(1,·)=每镜句数
+  const perShot = scriptCapacity(1, seconds);
+  const batchCount = Math.min(s0.shotCount, Math.max(1, Math.ceil(remaining.length / perShot)));
+  await shootNextBatch(batchCount);
 }
 
 
 /** 模式B·续写新剧情:LLM 接着前情写下一段剧本(可引入新角色/新场景)→ 差量生成新增资产 →
  * 与模式A共用「拍下一批」管线。新剧本段直接 merge 进 outlineJson 末尾,剩余量/台词分配/
- * 校验/装配全部无感复用——旧剧本未拍完的台词仍会先被装入,剧情顺序天然正确。 */
-export async function extendAgent() {
+ * 校验/装配全部无感复用——旧剧本未拍完的台词仍会先被装入,剧情顺序天然正确。
+ * isFinal:用户勾选「本段为最终章」时为 true,续写 LLM 据此写大结局而非继续留钩子。 */
+export async function extendAgent(isFinal = false) {
   const s0 = useCanvasStore.getState().agentState;
   if (!s0?.outlineJson || !s0.outlineNodeId || s0.stage !== "done") return;
   aborted = false;
   patch({ stage: "outline", error: null });
   try {
-    // 前情提要带台词,续写 LLM 才能接准故事进度(画面摘要+本镜台词)
-    const prevShots = s0.shots.map((sh) => ({
+    const seconds = Number(s0.shotSeconds) || 10;
+    const names = s0.outlineJson.characters.map((c) => c.name);
+    // 前情未拍的剩余台词传给续写 LLM:分配器会把它们装进新批最前面先拍,
+    // 不告诉 LLM 这一事实,新段开头会按"末镜状态"续写,与先拍的剩余句重复或矛盾(接缝盲区)
+    const unshotLines = remainingScriptLines(s0.outlineJson.script, names, s0.shots.length, seconds);
+    // 前情提要带台词,续写 LLM 才能接准故事进度(画面摘要+本镜台词);
+    // 末两镜给完整画面描述:上一段的钩子状态常落在末镜描述后半段,80字缩略会截掉钩子
+    const prevShots = s0.shots.map((sh, idx) => ({
       index: sh.index,
       scene: sh.scene,
-      summary: sh.description.slice(0, 80),
+      summary: idx >= s0.shots.length - 2 ? sh.description : sh.description.slice(0, 80),
       dialogue: sh.dialogue,
     }));
     const seg = await plan<Outline>(
       "outline-continue",
-      JSON.stringify({ outline: s0.outlineJson, prevShots }),
+      JSON.stringify({ outline: s0.outlineJson, prevShots, unshotLines, isFinal }),
       s0.shotCount,
       s0.shotSeconds,
     );
@@ -486,10 +497,12 @@ export async function extendAgent() {
 
 /** 拍摄下一批:分镜续拍计划 → 分镜视频生成 → 时间线追加。模式A(继续制作)与模式B(续写后继续)共用;
  * 前置条件:outlineJson 存在(调用方负责守卫与剩余量检查) */
-async function shootNextBatch() {
+async function shootNextBatch(overrideCount?: number) {
   const s0 = useCanvasStore.getState().agentState!;
   patch({ stage: "storyboard", error: null });
   try {
+    // 批量可收缩(模式A剩余台词少于一批容量时只拍需要的镜数);缺省沿用整批 shotCount
+    const count = overrideCount ?? s0.shotCount;
     const outlineNode = useCanvasStore.getState().nodes.find((n) => n.id === s0.outlineNodeId);
     const assetNames = s0.assets.filter((a) => a.kind === "character").map((a) => a.name);
     const sceneNames = s0.assets.filter((a) => a.kind === "scene").map((a) => a.name);
@@ -502,7 +515,7 @@ async function shootNextBatch() {
       ? planShotDialogue(
           s0.outlineJson.script,
           s0.outlineJson.characters.map((c) => c.name),
-          s0.shotCount, seconds,
+          count, seconds,
           consumedScriptLineCount(s0.outlineJson.script, s0.outlineJson.characters.map((c) => c.name), indexOffset, seconds),
         )
       : null;
@@ -515,13 +528,13 @@ async function shootNextBatch() {
         outline: outlineNode?.data.prompt,
         assetNames,
         sceneNames,
-        count: s0.shotCount,
+        count,
         secondsPerShot: s0.shotSeconds,
         dialoguePlan,
         indexOffset,
         prevShots,
       }),
-      s0.shotCount,
+      count,
     );
     if (aborted) return;
     const batch: AgentShot[] = shotsPlan.shots.map((sh, i) => ({

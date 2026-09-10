@@ -79,6 +79,8 @@ export function AgentPanel({ onClose }: Props) {
   const [category, setCategory] = useState<"all" | "2d" | "3d" | "real">("all");
   const [customOpen, setCustomOpen] = useState(false);
   const [customPrompt, setCustomPrompt] = useState("");
+  // 续写勾选:本段为最终章(写大结局);只作用于下一次续写,拍完回到 done 可再改
+  const [isFinalSegment, setIsFinalSegment] = useState(false);
 
   const stage = agentState?.stage ?? "idle";
   const error = agentState?.error ?? null;
@@ -361,8 +363,17 @@ export function AgentPanel({ onClose }: Props) {
                       ▶ 继续制作下一批
                     </button>
                   ) : null}
+                  <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={isFinalSegment}
+                      onChange={(e) => setIsFinalSegment(e.target.checked)}
+                      className="h-3.5 w-3.5 accent-violet-500"
+                    />
+                    本段为最终章(写大结局)
+                  </label>
                   <button
-                    onClick={() => void extendAgent()}
+                    onClick={() => void extendAgent(isFinalSegment)}
                     className="rounded-md border border-violet-300 bg-white px-4 py-2 text-sm font-medium text-violet-600 hover:bg-violet-50"
                   >
                     ✍ 续写新剧情接着拍
