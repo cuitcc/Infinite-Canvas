@@ -183,6 +183,17 @@ export function validateStoryboard(data: unknown, count: number, dialoguePlan?: 
       if (speech) {
         issues.push(`第${n}镜没有台词,description 却写了言语动作"${speech[0]}":无台词镜头角色嘴部保持闭合,改用眼神、表情与肢体动作推进剧情`);
       }
+      // B(声音归属):空台词镜 description 承诺人声("守林人的声音在背景中回响"),模型会自行
+      // 编一段解说旁白来兑现承诺(实测产出"下面给你介绍今天的比赛看点")。台词由分配表锁死,
+      // 本镜为空是设计结果,修法只能从 description 侧删掉声音承诺,改写成纯画面动作与视觉描写。
+      // 只在紧邻处非否定(没有/无/禁止)时才判违规,防止把"没有声音"这类否定式误报
+      const voice = desc.match(/声音|嗓音|耳语|旁白|解说|念白|呢喃|喃喃/);
+      if (voice) {
+        const head = desc.slice(Math.max(0, (voice.index ?? 0) - 4), voice.index ?? 0);
+        if (!/没有|无|禁止/.test(head)) {
+          issues.push(`第${n}镜没有台词,description 却承诺了声音"${voice[0]}":本镜台词为空,模型会自行编造旁白或人声来兑现承诺(实测产出无关解说台词),删去所有声音/旁白相关字眼,改写成纯画面动作与视觉描写`);
+        }
+      }
     }
     // C':有台词镜反向合同——每个说话人必须在 description 中有出场安排。实测:外星副官的台词
     // 在分配表里,description 却只写它"盯着屏幕",无人安排其说话动作,人声成了来历不明的画外音
