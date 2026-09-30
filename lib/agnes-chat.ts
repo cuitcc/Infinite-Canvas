@@ -30,7 +30,7 @@ async function createAgnesChatCompletionWithRetry(params: {
 
   const baseUrl = process.env.AGNES_TEXT_API_BASE_URL || process.env.AGNES_API_BASE_URL || DEFAULT_BASE_URL;
   const requestBody = {
-    model: params.model ?? "agnes-2.5-flash",
+    model: params.model ?? "agnes-3.0-flash",
     messages: params.messages,
     temperature: params.temperature ?? 0.4,
     max_tokens: params.maxTokens ?? 4096,

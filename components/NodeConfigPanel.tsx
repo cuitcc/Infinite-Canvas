@@ -268,11 +268,11 @@ export function NodeConfigPanel({ node, onClose }: { node: Node<CanvasNodeData>;
             <label className="flex flex-col gap-1">
               文本模型
               <select
-                value={data.textModel ?? "agnes-2.5-flash"}
+                value={data.textModel ?? "agnes-3.0-flash"}
                 onChange={(e) => updateNodeData(id, { textModel: e.target.value })}
                 className="rounded border border-slate-200 bg-white px-2 py-1.5"
               >
-                <option value="agnes-2.5-flash">agnes-2.5-flash (快)</option>
+                <option value="agnes-3.0-flash">agnes-3.0-flash (快)</option>
                 <option value="agnes-2.5-pro">agnes-2.5-pro (强)</option>
               </select>
             </label>

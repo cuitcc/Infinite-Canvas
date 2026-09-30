@@ -24,6 +24,9 @@ export function getDb(): import("better-sqlite3").Database {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS project_agent_state (
+      project_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS nodes (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -67,6 +70,15 @@ export function getDb(): import("better-sqlite3").Database {
       error TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS pipeline_snapshots (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      data TEXT NOT NULL,
+      node_count INTEGER NOT NULL DEFAULT 0,
+      video_count INTEGER NOT NULL DEFAULT 0,
+      cover_media_id TEXT,
+      created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_nodes_project ON nodes(project_id);
     CREATE INDEX IF NOT EXISTS idx_edges_project ON edges(project_id);
@@ -151,7 +163,25 @@ export interface GenTaskRow {
 export function ensureDefaultProject(): { id: string; name: string } {
   const db = getDb();
   const existing = db.prepare("SELECT id, name FROM projects ORDER BY created_at ASC LIMIT 1").get() as { id: string; name: string } | undefined;
-  if (existing) return existing;
+  if (existing) {
+    // 历史版本曾在重建项目时留下孤儿节点/时间线，导致项目接口返回空画布。
+    // 只有当当前项目没有节点且数据库恰好存在一个有节点的旧项目时自动归并，避免误合并多个独立项目。
+    const currentCount = (db.prepare("SELECT count(*) AS n FROM nodes WHERE project_id = ?").get(existing.id) as { n: number }).n;
+    if (currentCount === 0) {
+      const orphan = db.prepare("SELECT project_id AS id, count(*) AS n FROM nodes WHERE project_id <> ? GROUP BY project_id ORDER BY n DESC LIMIT 1").get(existing.id) as { id: string; n: number } | undefined;
+      if (orphan?.id && orphan.n > 0) {
+        db.transaction(() => {
+          db.prepare("UPDATE nodes SET project_id = ? WHERE project_id = ?").run(existing.id, orphan.id);
+          db.prepare("UPDATE edges SET project_id = ? WHERE project_id = ?").run(existing.id, orphan.id);
+          db.prepare("UPDATE timeline SET project_id = ? WHERE project_id = ?").run(existing.id, orphan.id);
+          db.prepare("UPDATE gen_tasks SET project_id = ? WHERE project_id = ?").run(existing.id, orphan.id);
+          db.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").run(nowTs(), existing.id);
+        })();
+        console.warn(`[db] recovered ${orphan.n} orphan nodes from project ${orphan.id} into ${existing.id}`);
+      }
+    }
+    return existing;
+  }
 
   const id = newId();
   const ts = nowTs();
@@ -207,6 +237,11 @@ export function getProjectGraph(projectId: string) {
 
   return {
     project,
+    agentState: (() => {
+      const row = db.prepare("SELECT data FROM project_agent_state WHERE project_id=?").get(projectId) as { data: string } | undefined;
+      return row ? JSON.parse(row.data) : null;
+    })(),
+    timeline: getTimeline(projectId),
     nodes: nodeRows.map(row => ({
       id: row.id,
       position: { x: row.position_x, y: row.position_y },
@@ -226,6 +261,7 @@ export function saveProjectGraph(
   graph: {
     nodes: Array<{ id: string; position: { x: number; y: number }; data: Record<string, unknown> }>;
     edges: Array<{ id: string; source: string; target: string; data?: Record<string, unknown> | null }>;
+    agentState?: unknown;
     deletedNodeIds?: string[];
     deletedEdgeIds?: string[];
   }
@@ -233,6 +269,11 @@ export function saveProjectGraph(
   const db = getDb();
   const ts = nowTs();
   db.transaction(() => {
+    if (!db.prepare("SELECT 1 FROM projects WHERE id=?").get(projectId)) throw new Error("项目不存在");
+    if (graph.agentState !== undefined) {
+      db.prepare("INSERT INTO project_agent_state (project_id,data,updated_at) VALUES (?,?,?) ON CONFLICT(project_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at")
+        .run(projectId, JSON.stringify(graph.agentState), ts);
+    }
     for (const n of graph.deletedNodeIds ?? []) deleteNode(n);
     for (const e of graph.deletedEdgeIds ?? []) deleteEdge(e);
     // 同步删除:payload 中不存在的节点/边视为已删除(前端删除后自动保存场景)
@@ -251,7 +292,7 @@ export function saveProjectGraph(
 export async function saveRemoteMedia(type: "image" | "video", url: string): Promise<MediaRecord> {
   mkdirSync(MEDIA_DIR, { recursive: true });
 
-  const response = await fetch(url, { cache: "no-store" });
+  const response = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(120_000) });
   if (!response.ok) {
     throw new Error(`媒体下载失败: ${response.status}`);
   }
@@ -346,10 +387,65 @@ export function getGenTasksForProject(projectId: string): GenTaskRow[] {
   return getDb().prepare("SELECT * FROM gen_tasks WHERE project_id = ? ORDER BY created_at DESC LIMIT 100").all(projectId) as GenTaskRow[];
 }
 
+export function getNodeData(nodeId: string): Record<string, unknown> | undefined {
+  const row = getDb().prepare("SELECT data FROM nodes WHERE id = ?").get(nodeId) as { data: string } | undefined;
+  if (!row) return undefined;
+  try { return JSON.parse(row.data) as Record<string, unknown>; } catch { return undefined; }
+}
+
 export function updateNodeData(nodeId: string, dataPatch: Record<string, unknown>) {
   const db = getDb();
   const row = db.prepare("SELECT data FROM nodes WHERE id = ?").get(nodeId) as { data: string } | undefined;
   if (!row) return;
   const merged = { ...JSON.parse(row.data), ...dataPatch };
   db.prepare("UPDATE nodes SET data = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(merged), nowTs(), nodeId);
+}
+
+// ==================== 流水线快照（画布流水线库） ====================
+
+export interface PipelineSnapshotMeta {
+  id: string;
+  name: string;
+  node_count: number;
+  video_count: number;
+  cover_media_id: string | null;
+  created_at: number;
+}
+
+export interface PipelineSnapshotData {
+  nodes: Array<{ id: string; position: { x: number; y: number }; data: Record<string, unknown> }>;
+  edges: Array<{ id: string; source: string; target: string; data?: Record<string, unknown> | null }>;
+  clips: unknown[];
+}
+
+/** 保存一份流水线快照：节点/连线/时间线打包为 JSON,媒体文件不打包(载入后仍可引用已生成的媒体) */
+export function savePipelineSnapshot(name: string, data: PipelineSnapshotData): PipelineSnapshotMeta {
+  const db = getDb();
+  const id = newId();
+  const imageNode = data.nodes.find((n) => n.data?.kind === "image" && n.data?.mediaId) as { data: { mediaId: string } } | undefined;
+  const meta: PipelineSnapshotMeta = {
+    id,
+    name,
+    node_count: data.nodes.length,
+    video_count: data.nodes.filter((n) => n.data?.kind === "video").length,
+    cover_media_id: imageNode ? imageNode.data.mediaId : null,
+    created_at: nowTs(),
+  };
+  db.prepare("INSERT INTO pipeline_snapshots (id, name, data, node_count, video_count, cover_media_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run(id, name, JSON.stringify(data), meta.node_count, meta.video_count, meta.cover_media_id, meta.created_at);
+  return meta;
+}
+
+export function listPipelineSnapshots(): PipelineSnapshotMeta[] {
+  return getDb().prepare("SELECT id, name, node_count, video_count, cover_media_id, created_at FROM pipeline_snapshots ORDER BY created_at DESC").all() as PipelineSnapshotMeta[];
+}
+
+export function getPipelineSnapshot(id: string): (PipelineSnapshotMeta & { data: PipelineSnapshotData }) | undefined {
+  const row = getDb().prepare("SELECT id, name, data, node_count, video_count, cover_media_id, created_at FROM pipeline_snapshots WHERE id = ?").get(id) as { id: string; name: string; data: string; node_count: number; video_count: number; cover_media_id: string | null; created_at: number } | undefined;
+  if (!row) return undefined;
+  return { id: row.id, name: row.name, node_count: row.node_count, video_count: row.video_count, cover_media_id: row.cover_media_id, created_at: row.created_at, data: JSON.parse(row.data) as PipelineSnapshotData };
+}
+
+export function deletePipelineSnapshot(id: string) {
+  getDb().prepare("DELETE FROM pipeline_snapshots WHERE id = ?").run(id);
 }

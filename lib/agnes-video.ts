@@ -1,3 +1,4 @@
+import { VIDEO_SUBMIT_TIMEOUT_MS } from "./video-retry";
 import { AgnesCreateVideoBody, AgnesVideoTask, AgnesVideoMode, CreateVideoInput } from "@/types/agnes";
 
 const DEFAULT_BASE_URL = "https://api.agnes-ai.cn/v1";
@@ -109,23 +110,15 @@ export async function createAgnesVideo(body: AgnesCreateVideoBody): Promise<Agne
     aspect_ratio: body.aspect_ratio,
     promptLength: body.prompt.length,
   });
-  try {
-    return await requestAgnes<AgnesVideoTask>("/videos", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-  } catch (error) {
-    // Agnes 视频限流为每分钟 1 条：等待一个完整窗口后重试一次,仍失败则抛出明确提示
-    if (error instanceof AgnesApiError && error.status === 429) {
-      console.warn("[agnes-video] rate limited, retrying once after 65s");
-      await sleep(65_000);
-      return await requestAgnes<AgnesVideoTask>("/videos", {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
-    }
-    throw error;
+  // 创建失败的退避交给持久化队列；HTTP 请求内不 sleep、不重发不确定的请求。
+  const task = await requestAgnes<AgnesVideoTask>("/videos", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  if (!task || typeof task.id !== "string" || !task.id.trim()) {
+    throw new AgnesResponseError("上游响应缺少有效任务 ID");
   }
+  return task;
 }
 
 export async function getAgnesVideo(taskId: string, model = DEFAULT_VIDEO_MODEL): Promise<AgnesVideoTask> {
@@ -170,6 +163,7 @@ export async function resolveAgnesVideoUrl(task: AgnesVideoTask): Promise<AgnesV
         "Content-Type": "application/json",
       },
       cache: "no-store",
+      signal: AbortSignal.timeout(30_000),
     });
 
     const text = await response.text();
@@ -202,22 +196,44 @@ async function requestAgnes<T>(path: string, init: RequestInit, isFullUrl = fals
 
   const baseUrl = process.env.AGNES_API_BASE_URL || DEFAULT_BASE_URL;
   const url = isFullUrl ? path : `${baseUrl}${path}`;
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      ...init.headers,
-    },
-    cache: "no-store",
-  });
+  const timeoutMs = init.method === "POST" ? VIDEO_SUBMIT_TIMEOUT_MS : 30_000;
+  const signal = AbortSignal.timeout(timeoutMs);
+  const startedAt = Date.now();
+  let response: Response;
+  let text: string;
+  let phase: "headers" | "body" = "headers";
+  try {
+    response = await fetch(url, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        ...init.headers,
+      },
+      cache: "no-store",
+      signal,
+    });
+    phase = "body";
+    text = await response.text();
+  } catch (error) {
+    const source = error as { name?: string; cause?: { code?: string }; code?: string };
+    const timedOut = signal.aborted && signal.reason?.name === "TimeoutError";
+    throw new AgnesTransportError(timedOut ? "timeout" : "network", {
+      elapsedMs: Date.now() - startedAt, timeoutMs, phase,
+      errorName: source?.name ?? "Error",
+      errorCode: typeof source?.cause?.code === "string" ? source.cause.code : typeof source?.code === "string" ? source.code : undefined,
+    });
+  }
 
-  const text = await response.text();
   const data = text ? safeJson(text) : null;
 
   if (!response.ok) {
     console.error("[agnes-video] request failed", { status: response.status, url: path, data });
-    throw new AgnesApiError(mapAgnesError(response.status, data), response.status, data);
+    const retryHeader = response.headers.get("retry-after");
+    const seconds = retryHeader ? Number(retryHeader) : NaN;
+    const retryAfterMs = Number.isFinite(seconds) ? Math.max(0, seconds * 1000)
+      : retryHeader ? Math.max(0, Date.parse(retryHeader) - Date.now()) : 0;
+    throw new AgnesApiError(mapAgnesError(response.status, data), response.status, data, retryAfterMs || 0, response.headers.get("x-request-id") ?? response.headers.get("request-id") ?? undefined);
   }
 
   return data as T;
@@ -231,13 +247,9 @@ function safeJson(text: string): unknown {
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function mapAgnesError(status: number, data?: unknown): string {
   if (status === 429) {
-    return "Agnes 视频生成限流中（每分钟仅允许创建 1 个任务），已自动等待重试仍失败，请稍等约 1 分钟后再试";
+    return "Agnes 请求触发速率限制";
   }
   if (status === 400) {
     const code = getAgnesErrorCode(data);
@@ -258,7 +270,7 @@ function mapAgnesError(status: number, data?: unknown): string {
   }
   if (status === 401) return "Agnes API Key 未授权";
   if (status === 404) return "Agnes 任务不存在";
-  if (status === 503) return "Agnes 服务繁忙，请稍后重试";
+  if (status === 503) return getAgnesErrorCode(data) === "video_queue_full" ? "Agnes 视频队列已满" : "Agnes 服务繁忙";
   return "Agnes 服务请求失败";
 }
 
@@ -279,7 +291,23 @@ function getAgnesErrorCode(data: unknown) {
 }
 
 export class AgnesApiError extends Error {
-  constructor(message: string, public status = 500, public detail?: unknown) {
+  constructor(message: string, public status = 500, public detail?: unknown, public retryAfterMs = 0, public requestId?: string) {
     super(message);
   }
+}
+
+/** 不把错误堆栈、请求头或提示词写入诊断，避免泄漏密钥和用户内容。 */
+export class AgnesTransportError extends Error {
+  constructor(public kind: "timeout" | "network", public diagnostic: {
+    elapsedMs: number; timeoutMs: number; phase: "headers" | "body";
+    errorName: string; errorCode?: string;
+  }) {
+    super(kind === "timeout" ? `视频提交等待上游响应超过 ${diagnostic.timeoutMs / 1000} 秒`
+      : `视频提交网络连接失败${diagnostic.errorCode ? `（${diagnostic.errorCode}）` : ""}`);
+    this.name = "AgnesTransportError";
+  }
+}
+
+export class AgnesResponseError extends Error {
+  constructor(message: string) { super(message); this.name = "AgnesResponseError"; }
 }

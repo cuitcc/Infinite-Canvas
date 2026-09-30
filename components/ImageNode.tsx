@@ -5,6 +5,7 @@ import { NodeProps, type Node } from "@xyflow/react";
 import { NodeShell } from "./NodeShell";
 import { PromptOptimizeModal } from "./PromptOptimizeModal";
 import { useCanvasStore, type CanvasNodeData } from "@/lib/store";
+import { TextEditorModal } from "./TextEditorModal";
 
 const STATUS_LABEL: Record<string, string> = {
   idle: "待生成",
@@ -20,16 +21,19 @@ export function ImageNodeView({ id, data, selected }: NodeProps<Node<CanvasNodeD
   const status = data.status ?? "idle";
   const busy = status === "queued" || status === "generating";
   const [optimizeOpen, setOptimizeOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
 
   return (
     <NodeShell kind="image" nodeId={id} title="图片" selected={selected} status={STATUS_LABEL[status]}>
       <div className="space-y-2">
         <textarea
           value={data.prompt ?? ""}
-          onChange={(e) => updateNodeData(id, { prompt: e.target.value })}
-          placeholder={data.mediaId ? "画面描述(可改后重新生成)" : "直接输入画面描述,或从文本节点连线导入"}
+          readOnly
+          onClick={() => setEditorOpen(true)}
+          title="点击放大编辑"
+          placeholder={data.mediaId ? "点击编辑画面描述" : "点击编辑画面描述,或从文本节点连线导入"}
           rows={2}
-          className="nodrag w-full resize-none rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700 outline-none focus:border-sky-400"
+          className="nodrag w-full cursor-pointer resize-none rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700 outline-none hover:border-sky-300"
         />
         <div className="flex justify-end">
           <button
@@ -80,6 +84,14 @@ export function ImageNodeView({ id, data, selected }: NodeProps<Node<CanvasNodeD
           )}
         </div>
         <PromptOptimizeModal nodeId={id} kind="image" open={optimizeOpen} onClose={() => setOptimizeOpen(false)} />
+        {editorOpen && (
+          <TextEditorModal
+            title="图片提示词"
+            value={data.prompt ?? ""}
+            onChange={(v) => updateNodeData(id, { prompt: v })}
+            onClose={() => setEditorOpen(false)}
+          />
+        )}
       </div>
     </NodeShell>
   );

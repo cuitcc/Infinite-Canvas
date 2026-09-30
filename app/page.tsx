@@ -11,6 +11,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useCanvasStore, normalizeKind, EMPTY_AGENT_STATE, type CanvasNodeData } from "@/lib/store";
+import { restoreAgentState } from "@/lib/agent-story";
 import { abortAgent } from "@/lib/agent-orchestrator";
 import { DEFAULT_EDGE_VOICE } from "@/lib/edge-tts-voices";
 import { ImageNodeView } from "@/components/ImageNode";
@@ -21,6 +22,7 @@ import { TimelinePanel } from "@/components/TimelinePanel";
 import { NodeConfigPanel } from "@/components/NodeConfigPanel";
 import { ModelManagerModal } from "@/components/ModelManagerModal";
 import { AgentPanel } from "@/components/AgentPanel";
+import { PipelineLibraryModal } from "@/components/PipelineLibraryModal";
 
 import { TextNodeView } from "@/components/TextNode";
 
@@ -47,6 +49,7 @@ function CanvasPage() {
   const projectId = useCanvasStore((s) => s.projectId);
   const nodes = useCanvasStore((s) => s.nodes);
   const edges = useCanvasStore((s) => s.edges);
+  const agentState = useCanvasStore((s) => s.agentState);
   const dirty = useCanvasStore((s) => s.dirty);
   const setProject = useCanvasStore((s) => s.setProject);
   const setGraph = useCanvasStore((s) => s.setGraph);
@@ -61,6 +64,7 @@ function CanvasPage() {
   const [loaded, setLoaded] = useState(false);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const [showModelManager, setShowModelManager] = useState(false);
+  const [showPipelineLibrary, setShowPipelineLibrary] = useState(false);
   const [showAgent, setShowAgent] = useState(false);
 
   const selectedNode = nodes.find((n) => n.selected) ?? null;
@@ -75,6 +79,15 @@ function CanvasPage() {
         const json = await res.json();
         const store = useCanvasStore.getState();
         let changed = false;
+        for (const t of json.pending ?? []) {
+          const node = store.nodes.find((n) => n.id === t.nodeId);
+          if (!node || !["queued", "generating"].includes(node.data.status ?? "")) continue;
+          const status = t.status === "queued" ? "queued" : "generating";
+          const message = t.message ?? "";
+          if (node.data.status !== status || node.data.generationMessage !== message) {
+            store.updateNodeData(t.nodeId, { status, generationMessage: message });
+          }
+        }
         for (const t of json.recent ?? []) {
           const node = store.nodes.find((n) => n.id === t.node_id);
           if (!node) continue;
@@ -103,6 +116,8 @@ function CanvasPage() {
       const graphRes = await fetch(`/api/projects/${project.id}/graph`);
       if (graphRes.ok) {
         const graph = await graphRes.json();
+        useCanvasStore.getState().setAgentState(graph.agentState ? restoreAgentState(graph.agentState) : { ...EMPTY_AGENT_STATE });
+        useCanvasStore.getState().setTimeline(graph.timeline ?? []);
         setGraph(
           graph.nodes.map((n: { id: string; position: { x: number; y: number }; data: { kind: string } & CanvasNodeData }) => ({ ...n, type: normalizeKind(n.data.kind), data: { ...n.data, kind: normalizeKind(n.data.kind) } })),
           graph.edges,
@@ -125,10 +140,11 @@ function CanvasPage() {
         const res = await fetch(`/api/projects/${projectId}/graph`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ nodes: payloadNodes, edges: payloadEdges, deletedNodeIds: [], deletedEdgeIds: [] }),
+          body: JSON.stringify({ nodes: payloadNodes, edges: payloadEdges, agentState, deletedNodeIds: [], deletedEdgeIds: [] }),
         });
         if (!res.ok) throw new Error(await res.text());
-        markSaved();
+        const current = useCanvasStore.getState();
+        if (current.nodes === nodes && current.edges === edges && current.agentState === agentState) markSaved();
         setSaveState("saved");
       } catch {
         setSaveState("error");
@@ -137,7 +153,7 @@ function CanvasPage() {
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [nodes, edges, dirty, loaded, projectId, markSaved]);
+  }, [nodes, edges, agentState, dirty, loaded, projectId, markSaved]);
 
   const spawnNode = useCallback((kind: CanvasNodeData["kind"], position: { x: number; y: number }) => {
     const defaults: Partial<CanvasNodeData> = {};
@@ -180,7 +196,7 @@ function CanvasPage() {
         fetch(`/api/projects/${projectId}/graph`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ nodes: [], edges: [] }),
+          body: JSON.stringify({ nodes: [], edges: [], agentState: null }),
         }),
         fetch(`/api/projects/${projectId}/timeline`, {
           method: "PUT",
@@ -195,14 +211,14 @@ function CanvasPage() {
   }, [projectId, setGraph]);
 
   const [exportState, setExportState] = useState<{ status: string; progress?: string; output?: string; error?: string } | null>(null);
-  const startExport = useCallback(async () => {
+  const startExport = useCallback(async (includeSubtitles = true) => {
     if (!projectId) return;
     setExportState({ status: "running" });
     try {
       const res = await fetch("/api/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId }),
+        body: JSON.stringify({ projectId, subtitles: includeSubtitles }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "导出失败");
@@ -236,6 +252,9 @@ function CanvasPage() {
         <div className="ml-auto flex gap-1.5">
           <button onClick={handleClearCanvas} className="rounded-md border border-rose-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-rose-500 hover:bg-rose-50">
             清空画布
+          </button>
+          <button onClick={() => setShowPipelineLibrary(true)} className="rounded-md border border-violet-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-violet-600 hover:bg-violet-50">
+            📚 流水线库
           </button>
           <button onClick={() => setShowModelManager(true)} className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50">
             ⚙ 模型管理
@@ -288,7 +307,7 @@ function CanvasPage() {
         )}
       </div>
 
-      <TimelinePanel onExport={() => void startExport()} />
+      {loaded && <TimelinePanel onExport={(includeSubtitles) => void startExport(includeSubtitles)} />}
 
       {selectedNode && (
         <NodeConfigPanel node={selectedNode} onClose={() => deselectAll()} />
@@ -296,6 +315,10 @@ function CanvasPage() {
 
       {showModelManager && (
         <ModelManagerModal onClose={() => setShowModelManager(false)} />
+      )}
+
+      {showPipelineLibrary && (
+        <PipelineLibraryModal onClose={() => setShowPipelineLibrary(false)} />
       )}
 
       {showAgent && (
@@ -319,9 +342,9 @@ function CanvasPage() {
           </div>
           {exportState.status === "running" && <p className="mt-1 text-[10px] text-slate-400">{exportState.progress}</p>}
           {exportState.status === "failed" && <p className="mt-1 text-[10px] text-rose-400">{exportState.error}</p>}
-          {exportState.status === "done" && exportState.output && (
-            <a href={`/api/exports/${exportState.output.split("/").pop()}`} download className="mt-2 block">
-              <video src={`/api/exports/${exportState.output.split("/").pop()}`} controls className="w-full rounded border border-slate-200" />
+          {exportState.status === "done" && typeof exportState.output === "string" && exportState.output && (
+            <a href={`/api/exports/${String(exportState.output).split("/").pop()}`} download className="mt-2 block">
+              <video src={`/api/exports/${String(exportState.output).split("/").pop()}`} controls className="w-full rounded border border-slate-200" />
             </a>
           )}
         </div>

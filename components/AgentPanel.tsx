@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { useCanvasStore, type AgentStage } from "@/lib/store";
 import { STYLE_LIBRARY, STYLE_CATEGORIES, type StyleEntry } from "@/lib/style-library";
-import { runAgent, chooseStyle, abortAgent } from "@/lib/agent-orchestrator";
+import { ChapterLibrary, NovelInput } from "./ChapterLibrary";
+import type { StoryMode } from "@/lib/agent-story";
+import { runAgent, chooseStyle, continueAgent, abortAgent } from "@/lib/agent-orchestrator";
 
 // 六个阶段的顺序与标签
 const STEPS: { key: AgentStage; label: string; num: string }[] = [
@@ -70,12 +72,18 @@ interface Props {
 
 export function AgentPanel({ onClose }: Props) {
   const agentState = useCanvasStore((s) => s.agentState);
+  const [mode, setMode] = useState<StoryMode>("original");
+  const [chapterCount, setChapterCount] = useState(6);
   const [theme, setTheme] = useState("");
   const [shotCount, setShotCount] = useState(8);
+  const [shotSeconds] = useState("auto");
   const [aspectRatio, setAspectRatio] = useState("9:16");
   const [category, setCategory] = useState<"all" | "2d" | "3d" | "real">("all");
   const [customOpen, setCustomOpen] = useState(false);
   const [customPrompt, setCustomPrompt] = useState("");
+  const [continueOpen, setContinueOpen] = useState(false);
+  const [continuation, setContinuation] = useState("");
+  const [continueShots, setContinueShots] = useState(4);
 
   const stage = agentState?.stage ?? "idle";
   const error = agentState?.error ?? null;
@@ -87,7 +95,7 @@ export function AgentPanel({ onClose }: Props) {
 
   const handleStart = () => {
     if (!theme.trim()) return;
-    void runAgent(theme.trim(), shotCount, aspectRatio);
+    void runAgent(theme.trim(), shotCount, aspectRatio, shotSeconds, mode, chapterCount);
   };
 
   const handleChooseStyle = (name: string, prompt: string) => {
@@ -111,17 +119,27 @@ export function AgentPanel({ onClose }: Props) {
       stage: "idle",
       theme: "",
       shotCount: 8,
+      shotSeconds: "auto",
       aspectRatio: "9:16",
       styleName: "",
       stylePrompt: "",
       outlineNodeId: null,
       outlineJson: null,
+      story: null,
+      activeChapterId: null,
       assets: [],
       shots: [],
       error: null,
       abortedFrom: undefined,
     });
     setTheme("");
+  };
+
+  const handleContinue = () => {
+    if (!continuation.trim()) return;
+    setContinueOpen(false);
+    void continueAgent(continuation.trim(), continueShots);
+    setContinuation("");
   };
 
   // 资产阶段计数
@@ -136,8 +154,8 @@ export function AgentPanel({ onClose }: Props) {
     <aside className="fixed right-0 top-0 z-50 flex h-full w-[400px] flex-col border-l border-slate-200 bg-white shadow-xl">
       {/* 顶部标题栏 */}
       <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-3">
-        <span className="text-sm font-semibold text-slate-800">🎬 短剧 Agent</span>
-        <span className="text-[10px] text-slate-400">一键生成短剧</span>
+        <span className="text-sm font-semibold text-slate-800">🎬 故事 / 小说 Agent</span>
+        <span className="text-[10px] text-slate-400">分章连续制作</span>
         <button onClick={onClose} className="ml-auto px-1 text-xs text-slate-400 hover:text-slate-600">
           ✕
         </button>
@@ -145,31 +163,40 @@ export function AgentPanel({ onClose }: Props) {
 
       {/* 主体内容区 */}
       <div className="flex-1 overflow-y-auto">
+        <ChapterLibrary />
         {/* idle 态：表单 */}
         {stage === "idle" && (
           <div className="space-y-4 p-4">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">短剧主题</label>
+            <div className="flex gap-2">
+              {(["original", "novel"] as const).map((v) => <button key={v} onClick={() => { setMode(v); setTheme(""); }} className={`flex-1 rounded border px-2 py-2 text-xs ${mode === v ? "border-violet-400 bg-violet-50 text-violet-700" : "border-slate-200"}`}>{v === "original" ? "原创长篇 Agent" : "小说改编 Agent"}</button>)}
+            </div>
+            {mode === "original" ? <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600">故事主线 / 创作要求</label>
               <textarea
                 rows={4}
                 value={theme}
                 onChange={(e) => setTheme(e.target.value)}
-                placeholder="输入短剧主题或剧本…"
+                placeholder="输入故事背景、主角目标、核心冲突和结局方向，将先规划完整主线与章节…"
                 className="w-full resize-none rounded border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-sky-400"
               />
-            </div>
+            </div> : <NovelInput value={theme} onChange={setTheme} />}
+            {mode === "original" && <label className="block text-xs text-slate-600">分幕 / 章节数<select value={chapterCount} onChange={(e) => setChapterCount(Number(e.target.value))} className="ml-3 rounded border border-slate-200 px-2 py-1">{[3,6,10,20].map((n) => <option key={n} value={n}>{n} 章</option>)}</select></label>}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="mb-1 block text-xs font-medium text-slate-600">分镜数</label>
+                <label className="mb-1 block text-xs font-medium text-slate-600">每章镜头数参考下限</label>
                 <select
                   value={shotCount}
                   onChange={(e) => setShotCount(Number(e.target.value))}
                   className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700"
                 >
-                  {[4, 6, 8, 12].map((n) => (
+                  {[4, 6, 8, 12, 16].map((n) => (
                     <option key={n} value={n}>{n} 镜</option>
                   ))}
                 </select>
+              </div>
+              <div className="flex flex-col justify-end">
+                <span className="mb-1 text-xs font-medium text-slate-600">镜头时长</span>
+                <span className="rounded border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-sm text-emerald-700">自动按台词/动作计算</span>
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-600">画面比例</label>
@@ -188,8 +215,14 @@ export function AgentPanel({ onClose }: Props) {
               disabled={!theme.trim()}
               className="w-full rounded-md bg-violet-500 py-2 text-sm font-medium text-white hover:bg-violet-600 disabled:cursor-not-allowed disabled:bg-slate-300"
             >
-              开始制作
+              规划主线并制作首章
             </button>
+            {error && (
+              <div className="rounded-md border border-rose-200 bg-rose-50 p-3">
+                <p className="text-xs text-rose-600">⚠ {error}</p>
+                <p className="mt-1 text-[11px] text-rose-500">本次任务未生成视频，可以直接重新点击开始制作。</p>
+              </div>
+            )}
           </div>
         )}
 
@@ -320,8 +353,17 @@ export function AgentPanel({ onClose }: Props) {
         {stage === "done" && (
           <div className="flex flex-col items-center justify-center gap-3 p-8 text-center">
             <span className="text-4xl">✅</span>
-            <p className="text-sm font-medium text-emerald-600">已填入时间线</p>
-            <p className="text-xs text-slate-500">打开底部时间线，点「导出」生成成片</p>
+            <p className="text-sm font-medium text-emerald-600">本章已填入时间线</p>
+            <p className="text-xs text-slate-500">打开底部时间线，点「导出」生成成片；在章节目录继续下一章。</p>
+            {error && <p className="text-xs text-rose-600">{error}</p>}
+            {agentState?.story?.mode !== "novel" && <button onClick={() => setContinueOpen(true)} className="rounded-md bg-violet-500 px-4 py-2 text-sm font-medium text-white hover:bg-violet-600">追加新篇章</button>}
+            {continueOpen && agentState?.story?.mode !== "novel" && (
+              <div className="w-full rounded-md border border-violet-200 bg-violet-50 p-3 text-left">
+                <label className="mb-1 block text-xs font-medium text-slate-600">新增篇章的剧情方向</label>
+                <textarea value={continuation} onChange={(e) => setContinuation(e.target.value)} rows={4} placeholder="输入下一幕的情节、冲突或发展方向，将生成完整章节剧本并补充新资产…" className="w-full resize-none rounded border border-slate-200 bg-white px-2 py-1.5 text-xs" />
+                <div className="mt-2 flex items-center gap-2"><span className="text-xs text-slate-500">新增分镜</span><select value={continueShots} onChange={(e) => setContinueShots(Number(e.target.value))} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs">{[1,2,4,6,8].map((n) => <option key={n} value={n}>{n} 镜</option>)}</select><button onClick={handleContinue} disabled={!continuation.trim()} className="ml-auto rounded bg-violet-500 px-3 py-1 text-xs text-white disabled:bg-slate-300">开始追加</button></div>
+              </div>
+            )}
           </div>
         )}
 

@@ -1,4 +1,5 @@
 "use client";
+import { syncActiveChapter, type AgentStory, type StoryOutline } from "./agent-story";
 
 import { create } from "zustand";
 import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type Edge, type EdgeChange, type Node, type NodeChange } from "@xyflow/react";
@@ -35,6 +36,7 @@ export interface CanvasNodeData extends Record<string, unknown> {
   frameRate?: number;
   status?: "idle" | "queued" | "generating" | "done" | "failed";
   error?: string;
+  generationMessage?: string;
   mediaId?: string;
   remoteUrl?: string;
   sourceNodeIds?: string[];
@@ -45,6 +47,8 @@ export interface CanvasNodeData extends Record<string, unknown> {
   referenceOrder?: string[];
   /** 视频节点：参考图节点 id → 角色名映射（短剧 Agent 设置），台词按名字精确绑定参考图 */
   refNames?: Record<string, string>;
+  /** 短剧 Agent 的角色固定音色档案，跨镜头复用，禁止按画面重新猜测。 */
+  voiceProfiles?: Record<string, string>;
   updatedAt?: number;
 }
 
@@ -57,16 +61,30 @@ export interface AgentAsset {
   kind: "character" | "scene" | "prop";
   name: string;
   prompt: string;
+  voiceProfile?: string;
   nodeId: string | null;
   status: "pending" | "running" | "done" | "failed";
 }
 
 export interface AgentShot {
   index: number;
+  /** 由对白口播时长或空镜动作复杂度计算出的 Agnes 时长档位。 */
+  duration: string;
   description: string;
+  shotType?: "intro" | "establishing" | "dialogue" | "reaction" | "transition" | "cutaway" | "action" | "climax" | "outro";
+  purpose?: string;
+  cutPoint?: string;
+  lighting?: string;
+  composition?: string;
+  blocking?: string;
+  emotion?: string;
+  sound?: string;
+  camera?: { size?: string; movement?: string; angle?: string; lens?: string; focus?: string; height?: string };
   dialogue: string[];
+  dialogueContext?: string[];
   characters: string[];
   scene: string;
+  transition?: "cut" | "continue";
   nodeId: string | null;
   status: "pending" | "running" | "done" | "failed" | "skipped";
 }
@@ -75,19 +93,16 @@ export interface AgentState {
   stage: AgentStage;
   theme: string;
   shotCount: number;
+  /** 兼容旧项目的时长字段；Agent 新项目固定为 auto，实际时长按每镜对白/动作计算。 */
+  shotSeconds: string;
   aspectRatio: string;
   styleName: string;
   stylePrompt: string;
   outlineNodeId: string | null;
   /** outline 阶段拿到的结构化大纲 JSON，供后续阶段复用，避免重复 LLM 调用 */
-  outlineJson?: {
-    title: string;
-    genre: string;
-    synopsis: string;
-    characters: { name: string; appearance: string }[];
-    scenes: { name: string; description: string }[];
-    script: string;
-  } | null;
+  outlineJson?: StoryOutline | null;
+  story?: AgentStory | null;
+  activeChapterId?: string | null;
   assets: AgentAsset[];
   shots: AgentShot[];
   error: string | null;
@@ -100,11 +115,14 @@ export const EMPTY_AGENT_STATE: AgentState = {
   stage: "idle",
   theme: "",
   shotCount: 8,
+  shotSeconds: "auto",
   aspectRatio: "9:16",
   styleName: "",
   stylePrompt: "",
   outlineNodeId: null,
   outlineJson: null,
+  story: null,
+  activeChapterId: null,
   assets: [],
   shots: [],
   error: null,
@@ -155,7 +173,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   dirty: false,
   agentState: null,
   setProject: (id) => set({ projectId: id }),
-  setAgentState: (patch) => set((s) => ({ agentState: { ...EMPTY_AGENT_STATE, ...s.agentState, ...patch }, dirty: true })),
+  setAgentState: (patch) => set((s) => ({ agentState: syncActiveChapter({ ...EMPTY_AGENT_STATE, ...s.agentState, ...patch }), dirty: true })),
   setGraph: (nodes, edges) => set({ nodes, edges, dirty: false }),
   setTimeline: (clips) => set({ timeline: clips, dirty: true }),
   addNode: (node) => set((s) => ({ nodes: [...s.nodes, node], dirty: true })),
@@ -272,6 +290,22 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     // 图片→视频:1 张为首帧图生视频;多张为关键帧序列(extra_body.image + keyframes)
     const firstFrameUrl = imageUrls.length === 1 ? imageUrls[0] : undefined;
 
+    // 台词注入:Agnes 可按提示词台词直生人声(Phase 0 实测含音轨),口型与台词同步
+    // 多行台词 + 多张参考图时按行序绑定参考图(lib/dialogue.ts),否则用通用注入
+    // 注入块拼在参考图一致性后缀之前:视频模型对提示词前部权重更高,长提示词尾部的台词指令易被稀释
+    const dialogue = data.dialogue?.trim();
+    if (dialogue && data.kind === "video") {
+      // 同一台词在画面描述和台词块重复出现会被模型当成两次说话指令,先剥离画面描述里的内嵌台词
+      prompt = stripEmbeddedDialogue(prompt, dialogue);
+      const injected = buildDialogueInjection(dialogue, imageUrls.length, speakerMap, Number(data.seconds) || undefined);
+      prompt = `${prompt}\n${injected ?? `人物开口说出台词(人声清晰、咬字清楚,口型与台词精确同步,台词全文只有这些,逐字念出,禁止增加、改写或延伸任何台词,不加旁白解说,念完即止)："${dialogue}"`}`;
+      const profiles = data.voiceProfiles;
+      if (profiles && typeof profiles === "object") {
+        const profileText = Object.entries(profiles).map(([name, voice]) => `${name}固定音色：${voice}`).join("；");
+        if (profileText) prompt += `\n声音身份锁定：${profileText}。所有镜头沿用同一角色音色，禁止变更音色、年龄感或性别；未说话角色保持闭口。`;
+      }
+    }
+
     // 有参考图时追加一致性描述(Agnes 无身份锁定参数,prompt 是官方唯一手段)
     if (imageUrls.length > 0 && data.kind === "video" && data.lockIdentity !== false) {
       const suffix = imageUrls.length >= 2
@@ -287,22 +321,21 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       }
     }
 
-    // 台词注入:Agnes 可按提示词台词直生人声(Phase 0 实测含音轨),口型与台词同步
-    // 多行台词 + 多张参考图时按行序绑定参考图(lib/dialogue.ts),否则用通用注入
-    const dialogue = data.dialogue?.trim();
-    if (dialogue && data.kind === "video") {
-      // 同一台词在画面描述和台词块重复出现会被模型当成两次说话指令,先剥离画面描述里的内嵌台词
-      prompt = stripEmbeddedDialogue(prompt, dialogue);
-      const injected = buildDialogueInjection(dialogue, imageUrls.length, speakerMap);
-      prompt = `${prompt}\n${injected ?? `人物开口说出台词（人声清晰，口型与台词精确同步）："${dialogue}"`}`;
-    }
+    // 音轨硬性约束压轴:视频模型对提示词末尾 token 权重最高。
+    // 有对白和无对白都必须在最后再次锁定，避免模型用开场动作或空窗即兴补人声。
+    const audioContract = data.kind === "video"
+      ? dialogue
+        ? "音频硬性要求:片头先保持至少0.35秒完全静默、所有人物闭口,然后从第一行台词开始;除台词块中的台词外全片禁止任何其他人声(包括嗯、啊、呢喃、喘息、哼唱、旁白、歌词和即兴对白),禁止提前、重复、改写或延后台词,每句念完立即安静,环境音与音乐音量压到最低"
+        : "音频硬性要求:本镜没有台词,从第0秒到结束绝对禁止任何人声和说话(包括嗯、啊、呢喃、喘息、哼唱、旁白、歌词、耳语和角色自言自语),只能保留画面内环境声、脚步声、衣物摩擦声或器物声;禁止用声音填充空窗"
+      : "";
+    if (audioContract) prompt = `${prompt}。${audioContract}`;
 
     if (!prompt.trim()) {
       set((st) => ({ nodes: st.nodes.map((n) => n.id === nodeId ? { ...n, data: { ...n.data, status: "failed", error: "没有可用提示词,请先连一个提示词节点或在节点内填写" } } : n) }));
       return;
     }
 
-    set((st) => ({ nodes: st.nodes.map((n) => n.id === nodeId ? { ...n, data: { ...n.data, status: "queued", error: undefined } } : n) }));
+    set((st) => ({ nodes: st.nodes.map((n) => n.id === nodeId ? { ...n, data: { ...n.data, status: "queued", error: undefined, generationMessage: "正在提交请求" } } : n) }));
 
     try {
       if (data.kind === "image") {
@@ -318,11 +351,11 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         const res = await fetch("/api/generate/video", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projectId: s.projectId, nodeId, prompt, image: firstFrameUrl, referenceUrls: imageUrls, audioUrls, seconds: data.seconds, aspectRatio: data.aspectRatio, negativePrompt: data.negativePrompt, seed: data.seed, model: data.model, size: data.videoSize }),
+        body: JSON.stringify({ projectId: s.projectId, nodeId, prompt, image: firstFrameUrl, referenceUrls: imageUrls, audioUrls, seconds: data.seconds, aspectRatio: data.aspectRatio, negativePrompt: [data.negativePrompt, dialogue ? "额外台词,新增对白,旁白,独白,朗读动作说明,角色名播报,拟声词,哼唱,重复台词,多人同时说话,开头抢话" : "任何人声,说话,对话,旁白,独白,耳语,呢喃,喘息,哼唱,歌词,角色自言自语"].filter(Boolean).join(","), seed: data.seed, model: data.model, size: data.videoSize }),
         });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || "生成失败");
-        set((st) => ({ nodes: st.nodes.map((n) => n.id === nodeId ? { ...n, data: { ...n.data, status: "generating" } } : n) }));
+        set((st) => ({ nodes: st.nodes.map((n) => n.id === nodeId ? { ...n, data: { ...n.data, status: json.status === "queued" ? "queued" : "generating", generationMessage: json.status === "queued" ? "已加入后台队列" : "上游已受理，正在生成" } } : n) }));
       }
     } catch (error) {
       set((st) => ({ nodes: st.nodes.map((n) => n.id === nodeId ? { ...n, data: { ...n.data, status: "failed", error: (error as Error).message } } : n) }));
