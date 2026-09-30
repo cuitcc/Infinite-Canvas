@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { buildAgnesVideoRequest, createAgnesVideo } from "@/lib/agnes-video";
+import { buildAgnesVideoRequest } from "@/lib/agnes-video";
 import { genericVideoCreate } from "@/lib/generic-provider";
 import { resolveModel } from "@/lib/model-registry";
 import { getMediaById, updateNodeData, upsertGenTask, newId, nowTs } from "@/lib/db";
@@ -7,6 +7,8 @@ import { uploadBufferToTos } from "@/lib/tos";
 import { downloadImageBuffer, resizeImageBuffer } from "@/lib/image-utils";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { enqueueVideo, findActiveVideoTask } from "@/lib/video-queue";
+import { startVideoPoller } from "@/lib/poll";
 
 /** Agnes Image 输出的 4K 大图(常达十几 MB)Agnes Video reference/keyframe 模式无法处理,
  *  需要统一缩放到最大 1024px 后再传给 Agnes。 */
@@ -86,6 +88,7 @@ async function normalizeAudioUrls(urls: string[]): Promise<string[]> {
 }
 
 export async function POST(req: NextRequest) {
+  let failedNodeId: string | undefined;
   try {
     const body = await req.json();
     const { projectId, nodeId, prompt, image, referenceUrls = [], audioUrls = [], seconds, aspectRatio, negativePrompt, seed, model, size } = body as {
@@ -107,15 +110,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "提示词不能为空" }, { status: 400 });
     }
 
+    if (typeof projectId !== "string" || typeof nodeId !== "string" || !projectId || !nodeId) {
+      return NextResponse.json({ error: "缺少项目或节点 ID" }, { status: 400 });
+    }
+    failedNodeId = nodeId;
+    const active = findActiveVideoTask(projectId, nodeId);
+    if (active) {
+      startVideoPoller();
+      return NextResponse.json({ ok: true, taskId: active.id, agnesTaskId: active.agnes_task_id, status: active.status, reused: true });
+    }
+
     // 按模型路由:Agnes 走专用 SDK,其他厂商走 OpenAI 兼容通用层
     const resolved = model ? resolveModel(model) : undefined;
     const isAgnes = !resolved || resolved.provider.name === "Agnes";
 
     let images = referenceUrls.filter(Boolean);
-    let agnesTaskId: string | null = null;
+    const agnesTaskId: string | null = null;
     let providerTaskId = "";
     let providerId = "";
     let modelName = model ?? "agnes-video-2.5-flash";
+
+    // 该部署只允许免费的 Flash 视频模型，避免前端或旧项目配置误用付费/不可用模型。
+    if (isAgnes && modelName !== "agnes-video-2.5-flash") {
+      return NextResponse.json({ error: "当前部署仅支持免费的 agnes-video-2.5-flash 模型" }, { status: 400 });
+    }
 
     if (isAgnes) {
       // Agnes Video 只有 reference 模式(>=2 张参考图)才接受 audios 字段
@@ -148,9 +166,9 @@ export async function POST(req: NextRequest) {
         seed,
       };
       console.log("[generate/video] request", { nodeId, model: modelName, mode: input.mode, seconds: input.seconds, aspectRatio: input.aspect_ratio, referenceCount: images.length, referenceUrls: images, audioCount: audios.length });
-      const task = await createAgnesVideo(buildAgnesVideoRequest(input, modelName));
-      console.log("[generate/video] task created", { nodeId, agnesTaskId: task.id, model: task.model });
-      agnesTaskId = task.id;
+      const task = enqueueVideo(projectId, nodeId, buildAgnesVideoRequest(input, modelName));
+      startVideoPoller();
+      return NextResponse.json({ ok: true, taskId: task.id, agnesTaskId: task.agnes_task_id, status: task.status }, { status: 202 });
     } else {
       const genericTask = await genericVideoCreate({
         modelName: model!, prompt: prompt.trim(),
@@ -180,10 +198,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, taskId, agnesTaskId, providerTaskId, providerId, model: modelName });
   } catch (error) {
     const message = (error as Error).message;
-    try {
-      const body2 = await req.json();
-      if (body2?.nodeId) updateNodeData(body2.nodeId, { status: "failed", error: message });
-    } catch { /* ignore */ }
+    if (failedNodeId) updateNodeData(failedNodeId, { status: "failed", error: message });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

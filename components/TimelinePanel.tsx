@@ -10,13 +10,14 @@ function fmt(t: number) {
   return `${m}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
 }
 
-export function TimelinePanel({ onExport }: { onExport?: () => void }) {
+export function TimelinePanel({ onExport }: { onExport?: (includeSubtitles?: boolean) => void }) {
   const nodes = useCanvasStore((s) => s.nodes);
   const timeline = useCanvasStore((s) => s.timeline);
   const setTimeline = useCanvasStore((s) => s.setTimeline);
   const projectId = useCanvasStore((s) => s.projectId);
 
   const [collapsed, setCollapsed] = useState(false);
+  const [includeSubtitles, setIncludeSubtitles] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
   const videoRefs = useRef<Array<HTMLVideoElement | null>>([]);
@@ -91,11 +92,12 @@ export function TimelinePanel({ onExport }: { onExport?: () => void }) {
           {collapsed ? "▸" : "▾"} 时间线
         </button>
         <span className="text-[10px] text-slate-400">{clips.length} 个片段</span>
-        {onExport && (
-          <button onClick={onExport} className="ml-auto rounded-md bg-emerald-500 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-emerald-600">
-            导出成片
+        {onExport && (<>
+          <label className="ml-auto flex items-center gap-1 text-[10px] text-slate-500"><input type="checkbox" checked={includeSubtitles} onChange={(e) => setIncludeSubtitles(e.target.checked)} />字幕</label>
+          <button onClick={() => onExport(includeSubtitles)} className="ml-auto rounded-md bg-emerald-500 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-emerald-600">
+            {includeSubtitles ? "导出成片（含字幕）" : "导出成片"}
           </button>
-        )}
+        </>)}
       </div>
 
       {!collapsed && (

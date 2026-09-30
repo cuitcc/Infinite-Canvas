@@ -1,3 +1,5 @@
+import { normalizeDialogueBody } from "./dialogue-plan";
+
 /** 转义正则特殊字符 */
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -21,7 +23,7 @@ function durationNote(seconds: number | undefined, totalChars: number): string {
 /** 台词收尾禁令(多句/单句),两个注入分支共用,保证措辞一致。
  * 三个靶子:桥接(模型爱在两句间补衔接词/合并到一张嘴念)、吞字含糊(短句+语气词最易发生)、空窗填充(念完继续说)。 */
 const CLOSING_MULTI =
-  "\n以上台词由各自角色分别开口,一人只说自己名下的一句,禁止任何角色替他人念台词,禁止重复台词;" +
+  "\n以上台词由各自角色分别开口,每人按顺序念完自己名下的全部台词，同一人物可以有多句,禁止任何角色替他人念台词,禁止重复台词;" +
   "台词全文只有这些,每个字都要咬字清晰、完整念出,禁止吞字、含糊带过或拖长音;" +
   "句与句之间禁止添加任何衔接词、语气词或新台词,禁止把两句合成一句自然对话,禁止把多句合并到一张嘴里念完,句间停顿处保持安静;" +
   "禁止增加、改写或延伸任何台词,不加旁白解说。";
@@ -36,7 +38,16 @@ const CLOSING_SINGLE =
  * 否则回退:多行台词且行数=参考图数时按行序绑定;都不适用返回 null(调用方回退到通用注入)
  * seconds:本镜时长(秒),用于注入时长锚定,让模型把剩余时长留给动作与沉默而非即兴台词 */
 export function buildDialogueInjection(dialogue: string, referenceCount: number, speakerMap?: string[], seconds?: number): string | null {
-  const lines = dialogue.split("\n").map((l) => l.trim()).filter(Boolean);
+  const lines = (typeof dialogue === "string" ? dialogue : String(dialogue ?? ""))
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const m = /^([^：:]+)[：:](.*)$/.exec(line);
+      if (!m) return line;
+      const body = normalizeDialogueBody(m[2]);
+      return `${m[1].trim()}：${body}`;
+    });
   if (lines.length === 0) return null;
   const totalChars = lines.reduce((n, l) => {
     const m = /^([^：:]+)[：:]\s*(.+)$/.exec(l);
@@ -100,8 +111,21 @@ export function buildDialogueInjection(dialogue: string, referenceCount: number,
 
 /** 剥离画面提示词中内嵌的台词内容:同一台词在动作描述和台词块里各出现一次会让模型当成两次说话指令,导致口型错乱/乱说 */
 export function stripEmbeddedDialogue(prompt: string, dialogue: string): string {
-  const lines = dialogue.split("\n").map((l) => l.trim()).filter(Boolean);
-  let out = prompt;
+  const lines = (typeof dialogue === "string" ? dialogue : String(dialogue ?? ""))
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const m = /^([^：:]+)[：:](.*)$/.exec(line);
+      if (!m) return line;
+      const body = m[2]
+        .replace(/[（(][^）)]*[)）]/g, "")
+        .replace(/^[\s"'“”‘’「」『』]+|[\s"'“”‘’「」『』]+$/g, "")
+        .replace(/[。！？!?～…\s]+$/, "")
+        .trim();
+      return `${m[1].trim()}：${body}`;
+    });
+  let out = typeof prompt === "string" ? prompt : String(prompt ?? "");
   for (const line of lines) {
     // 分镜师违规把整行"角色名：（动作）台词"塞进 description:从说话人冒号起整段剥离(含括号动作)。
     // 该格式既无引号也无"说"类动词,是此前剥离静默失败、台词双重注入的主通道

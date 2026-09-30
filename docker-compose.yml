@@ -1,11 +1,18 @@
 services:
   infinite-canvas:
     build: .
-    image: infinite-canvas:latest
-    container_name: infinite-canvas
-    user: "1000:1000"
+    image: infinite-canvas-v2:latest
+    container_name: infinite-canvas-v2
+    # 与 Dockerfile 中的 nextjs 用户一致，确保 SQLite/媒体卷可写
+    user: "1001:1001"
     ports:
-      - "3001:3000"
+      - "3002:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     environment:
       AGNES_API_KEY: ${AGNES_API_KEY}
       ARK_API_KEY: ${ARK_API_KEY:-}
@@ -16,5 +23,8 @@ services:
       TOS_ACCESS_KEY_ID: ${TOS_ACCESS_KEY_ID}
       TOS_SECRET_ACCESS_KEY: ${TOS_SECRET_ACCESS_KEY}
     volumes:
-      - ./data:/app/data
+      - infinite-canvas-v2-data:/app/data
     restart: unless-stopped
+
+volumes:
+  infinite-canvas-v2-data:

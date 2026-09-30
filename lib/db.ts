@@ -24,6 +24,9 @@ export function getDb(): import("better-sqlite3").Database {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS project_agent_state (
+      project_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS nodes (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -160,7 +163,25 @@ export interface GenTaskRow {
 export function ensureDefaultProject(): { id: string; name: string } {
   const db = getDb();
   const existing = db.prepare("SELECT id, name FROM projects ORDER BY created_at ASC LIMIT 1").get() as { id: string; name: string } | undefined;
-  if (existing) return existing;
+  if (existing) {
+    // 历史版本曾在重建项目时留下孤儿节点/时间线，导致项目接口返回空画布。
+    // 只有当当前项目没有节点且数据库恰好存在一个有节点的旧项目时自动归并，避免误合并多个独立项目。
+    const currentCount = (db.prepare("SELECT count(*) AS n FROM nodes WHERE project_id = ?").get(existing.id) as { n: number }).n;
+    if (currentCount === 0) {
+      const orphan = db.prepare("SELECT project_id AS id, count(*) AS n FROM nodes WHERE project_id <> ? GROUP BY project_id ORDER BY n DESC LIMIT 1").get(existing.id) as { id: string; n: number } | undefined;
+      if (orphan?.id && orphan.n > 0) {
+        db.transaction(() => {
+          db.prepare("UPDATE nodes SET project_id = ? WHERE project_id = ?").run(existing.id, orphan.id);
+          db.prepare("UPDATE edges SET project_id = ? WHERE project_id = ?").run(existing.id, orphan.id);
+          db.prepare("UPDATE timeline SET project_id = ? WHERE project_id = ?").run(existing.id, orphan.id);
+          db.prepare("UPDATE gen_tasks SET project_id = ? WHERE project_id = ?").run(existing.id, orphan.id);
+          db.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").run(nowTs(), existing.id);
+        })();
+        console.warn(`[db] recovered ${orphan.n} orphan nodes from project ${orphan.id} into ${existing.id}`);
+      }
+    }
+    return existing;
+  }
 
   const id = newId();
   const ts = nowTs();
@@ -216,6 +237,11 @@ export function getProjectGraph(projectId: string) {
 
   return {
     project,
+    agentState: (() => {
+      const row = db.prepare("SELECT data FROM project_agent_state WHERE project_id=?").get(projectId) as { data: string } | undefined;
+      return row ? JSON.parse(row.data) : null;
+    })(),
+    timeline: getTimeline(projectId),
     nodes: nodeRows.map(row => ({
       id: row.id,
       position: { x: row.position_x, y: row.position_y },
@@ -235,6 +261,7 @@ export function saveProjectGraph(
   graph: {
     nodes: Array<{ id: string; position: { x: number; y: number }; data: Record<string, unknown> }>;
     edges: Array<{ id: string; source: string; target: string; data?: Record<string, unknown> | null }>;
+    agentState?: unknown;
     deletedNodeIds?: string[];
     deletedEdgeIds?: string[];
   }
@@ -242,6 +269,11 @@ export function saveProjectGraph(
   const db = getDb();
   const ts = nowTs();
   db.transaction(() => {
+    if (!db.prepare("SELECT 1 FROM projects WHERE id=?").get(projectId)) throw new Error("项目不存在");
+    if (graph.agentState !== undefined) {
+      db.prepare("INSERT INTO project_agent_state (project_id,data,updated_at) VALUES (?,?,?) ON CONFLICT(project_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at")
+        .run(projectId, JSON.stringify(graph.agentState), ts);
+    }
     for (const n of graph.deletedNodeIds ?? []) deleteNode(n);
     for (const e of graph.deletedEdgeIds ?? []) deleteEdge(e);
     // 同步删除:payload 中不存在的节点/边视为已删除(前端删除后自动保存场景)
@@ -260,7 +292,7 @@ export function saveProjectGraph(
 export async function saveRemoteMedia(type: "image" | "video", url: string): Promise<MediaRecord> {
   mkdirSync(MEDIA_DIR, { recursive: true });
 
-  const response = await fetch(url, { cache: "no-store" });
+  const response = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(120_000) });
   if (!response.ok) {
     throw new Error(`媒体下载失败: ${response.status}`);
   }
@@ -353,6 +385,12 @@ export function getPendingGenTasks(): GenTaskRow[] {
 
 export function getGenTasksForProject(projectId: string): GenTaskRow[] {
   return getDb().prepare("SELECT * FROM gen_tasks WHERE project_id = ? ORDER BY created_at DESC LIMIT 100").all(projectId) as GenTaskRow[];
+}
+
+export function getNodeData(nodeId: string): Record<string, unknown> | undefined {
+  const row = getDb().prepare("SELECT data FROM nodes WHERE id = ?").get(nodeId) as { data: string } | undefined;
+  if (!row) return undefined;
+  try { return JSON.parse(row.data) as Record<string, unknown>; } catch { return undefined; }
 }
 
 export function updateNodeData(nodeId: string, dataPatch: Record<string, unknown>) {

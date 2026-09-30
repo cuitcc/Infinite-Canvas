@@ -19,7 +19,7 @@ function useTextModels() {
             if (m.kind === "text") all.push({ modelId: m.modelId, label: m.label });
           }
         }
-        setModels(all.length ? all : [{ modelId: "agnes-2.5-flash", label: "agnes-2.5-flash" }]);
+        setModels(all.length ? all : [{ modelId: "agnes-3.0-flash", label: "agnes-3.0-flash" }]);
       } catch { /* ignore */ }
     })();
   }, []);
@@ -47,14 +47,14 @@ export function TextNodeView({ id, data, selected }: NodeProps<Node<CanvasNodeDa
       {data.textError && <p className="mt-1 text-[10px] text-rose-500">{data.textError}</p>}
       <div className="mt-2 flex flex-wrap gap-1.5">
         <select
-          value={data.textModel ?? "agnes-2.5-flash"}
+          value={data.textModel ?? "agnes-3.0-flash"}
           onChange={(e) => updateNodeData(id, { textModel: e.target.value })}
           className="nodrag rounded border border-slate-200 bg-white px-1.5 py-1 text-[10px] text-slate-600"
         >
           {textModels.length > 0 ? textModels.map((m) => (
             <option key={m.modelId} value={m.modelId}>{m.label}</option>
           )) : (
-            <option value="agnes-2.5-flash">agnes-2.5-flash</option>
+            <option value="agnes-3.0-flash">agnes-3.0-flash</option>
           )}
         </select>
         <button

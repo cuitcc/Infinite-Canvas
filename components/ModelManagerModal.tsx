@@ -55,12 +55,15 @@ export function ModelManagerModal({ onClose }: { onClose: () => void }) {
     setBusy(true);
     try {
       // 每行一个模型:modelId | 显示名 | text/image/video
-      const models = form.modelsText
+      const models = String(form.modelsText ?? "")
         .split("\n")
         .map((line) => line.trim())
         .filter(Boolean)
         .map((line) => {
-          const [modelId, label, kind] = line.split("|").map((s) => (s ?? "").trim());
+          const parts = String(line).split("|").map((s) => (s ?? "").trim());
+          const modelId = parts[0] ?? "";
+          const label = parts[1] ?? "";
+          const kind = parts[2] ?? "";
           return { modelId, label: label || modelId, kind: (["text", "image", "video"].includes(kind) ? kind : "text") as ProviderModelT["kind"] };
         });
       const res = await fetch("/api/models", {

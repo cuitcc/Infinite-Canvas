@@ -65,6 +65,7 @@ export function VideoNodeView({ id, data, selected }: NodeProps<Node<CanvasNodeD
           </button>
         </div>
         {dialogueError && <p className="text-[10px] text-rose-500">{dialogueError}</p>}
+        {busy && data.generationMessage && <p className="text-[10px] text-amber-600">{data.generationMessage}</p>}
         {data.error && <p className="text-[10px] text-rose-500">{data.error}</p>}
         {data.mediaId ? (
           <video
@@ -100,8 +101,11 @@ export function VideoNodeView({ id, data, selected }: NodeProps<Node<CanvasNodeD
           <select
             value={data.size ?? "1152x768"}
             onChange={(e) => {
-              const [w, h] = e.target.value.split("x").map(Number);
-              updateNodeData(id, { width: w, height: h });
+              const value = typeof e.target.value === "string" ? e.target.value : String(e.target.value ?? "1152x768");
+              const parts = value.split("x").map(Number);
+              const w = Number.isFinite(parts[0]) ? parts[0] : 1152;
+              const h = Number.isFinite(parts[1]) ? parts[1] : 768;
+              updateNodeData(id, { width: w, height: h, size: `${w}x${h}` });
             }}
             className="nodrag rounded border border-slate-200 bg-white px-1.5 py-1 text-[10px] text-slate-600"
           >
